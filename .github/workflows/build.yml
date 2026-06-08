@@ -88,9 +88,21 @@ jobs:
           echo "Found: $APP_PATH"
           cp -R "$APP_PATH" build/export/
 
-      - name: Upload artifact
+      - name: Upload .app artifact
         uses: actions/upload-artifact@v4
         with:
           name: NtfyMac-app
           path: build/export/*.app
+          if-no-files-found: error
+
+      - name: Package DMG
+        run: |
+          APP_PATH="$(find build/export -maxdepth 1 -name '*.app' -print -quit)"
+          bash scripts/make_dmg.sh "$APP_PATH" build/NtfyMac.dmg "Ntfy for Mac"
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NtfyMac-dmg
+          path: build/NtfyMac.dmg
           if-no-files-found: error

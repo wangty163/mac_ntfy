@@ -1,0 +1,96 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v1.0.0). Used for the DMG name/title."
+        required: false
+        default: "dev"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & publish DMG
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -switch /Applications/Xcode_15.4.app
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="${{ github.event.inputs.tag }}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building version: $VERSION"
+
+      - name: Build Release (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project NtfyMac.xcodeproj \
+            -scheme NtfyMac \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            clean build
+
+      - name: Stage app bundle
+        run: |
+          mkdir -p build/export
+          APP_PATH="$(find build/DerivedData/Build/Products/Release -maxdepth 1 -name '*.app' -print -quit)"
+          echo "Found: $APP_PATH"
+          cp -R "$APP_PATH" build/export/
+
+      - name: Package DMG
+        run: |
+          APP_PATH="$(find build/export -maxdepth 1 -name '*.app' -print -quit)"
+          DMG="build/NtfyMac-${{ steps.version.outputs.version }}.dmg"
+          bash scripts/make_dmg.sh "$APP_PATH" "$DMG" "Ntfy for Mac"
+          echo "DMG=$DMG" >> "$GITHUB_ENV"
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NtfyMac-dmg-${{ steps.version.outputs.version }}
+          path: ${{ env.DMG }}
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Ntfy for Mac ${{ steps.version.outputs.version }}
+          tag_name: ${{ steps.version.outputs.version }}
+          files: ${{ env.DMG }}
+          generate_release_notes: true
+          body: |
+            ## Ntfy for Mac ${{ steps.version.outputs.version }}
+
+            A native macOS menu-bar client for ntfy.
+
+            ### Install
+            1. Download `NtfyMac-${{ steps.version.outputs.version }}.dmg` below.
+            2. Open it and drag **Ntfy** into **Applications**.
+            3. Because the build is **unsigned**, the first launch is blocked by
+               Gatekeeper. Right-click the app → **Open** → **Open**, or run:
+               ```bash
+               xattr -dr com.apple.quarantine "/Applications/NtfyMac.app"
+               ```
