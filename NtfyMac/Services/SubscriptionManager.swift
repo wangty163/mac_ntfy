@@ -234,9 +234,9 @@ final class SubscriptionManager: ObservableObject {
 
     private func startMonitoring() {
         pathMonitor.pathUpdateHandler = { [weak self] path in
-            Task { @MainActor in
+            let online = path.status == .satisfied
+            Task { @MainActor [weak self] in
                 guard let self else { return }
-                let online = path.status == .satisfied
                 let wasOffline = !self.hasNetwork
                 self.hasNetwork = online
                 if online && wasOffline {
@@ -251,7 +251,7 @@ final class SubscriptionManager: ObservableObject {
             forName: NSWorkspace.didWakeNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.reconnectAll() }
+            Task { @MainActor [weak self] in self?.reconnectAll() }
         }
     }
 
