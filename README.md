@@ -40,6 +40,23 @@ in the background and reconnects automatically.
 - macOS 13 (Ventura) or later
 - Xcode 15 or later (to build)
 
+## 📥 Download (prebuilt DMG)
+
+Every push builds an unsigned `.app` **and** a `.dmg` as CI artifacts (see the
+**Actions** tab → latest **Build** run → *Artifacts*). Tagged releases publish
+the DMG on the **Releases** page:
+
+```bash
+git tag v1.0.0 && git push origin v1.0.0   # triggers the Release workflow
+```
+
+Because the builds are **unsigned**, macOS Gatekeeper blocks the first launch.
+Either right-click the app → **Open** → **Open**, or clear the quarantine flag:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/NtfyMac.app"
+```
+
 ## 🚀 Build & Run
 
 ```bash
