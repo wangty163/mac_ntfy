@@ -1,0 +1,96 @@
+name: Build
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build NtfyMac (macOS)
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -switch /Applications/Xcode_15.4.app
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Build (Debug, unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project NtfyMac.xcodeproj \
+            -scheme NtfyMac \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            ONLY_ACTIVE_ARCH=NO \
+            clean build \
+            | xcbeautify || \
+          xcodebuild \
+            -project NtfyMac.xcodeproj \
+            -scheme NtfyMac \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            ONLY_ACTIVE_ARCH=NO \
+            clean build
+
+  archive:
+    name: Archive .app artifact
+    runs-on: macos-14
+    timeout-minutes: 30
+    needs: build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -switch /Applications/Xcode_15.4.app
+
+      - name: Build Release (unsigned) into export dir
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project NtfyMac.xcodeproj \
+            -scheme NtfyMac \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            clean build
+
+      - name: Stage app bundle
+        run: |
+          mkdir -p build/export
+          APP_PATH="$(find build/DerivedData/Build/Products/Release -maxdepth 1 -name '*.app' -print -quit)"
+          echo "Found: $APP_PATH"
+          cp -R "$APP_PATH" build/export/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NtfyMac-app
+          path: build/export/*.app
+          if-no-files-found: error
