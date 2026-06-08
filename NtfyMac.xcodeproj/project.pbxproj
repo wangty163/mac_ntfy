@@ -1,0 +1,366 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		621F952D64187468E4036BF6 /* NtfyMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBCC0FA85E62ED084705BF13 /* NtfyMacApp.swift */; };
+		A678E535E4242DBE3F08BD0D /* NtfyMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C83FE2E7072883F6282826C /* NtfyMessage.swift */; };
+		6382EDE13024B11E226A17AC /* Subscription.swift in Sources */ = {isa = PBXBuildFile; fileRef = 694B53A8C1D8AB0CE8B30E58 /* Subscription.swift */; };
+		E2BF3B4395E483C4613AB145 /* ConnectionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4437E51AA46B9F5D1BC5D821 /* ConnectionState.swift */; };
+		6FD74C01CB423E7445B6C5A0 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133E3151958765ED069A8935 /* AppSettings.swift */; };
+		666703F1978C471644EF9E76 /* EmojiMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = D30F1EA242E9D3518CB7A70F /* EmojiMap.swift */; };
+		466B1DD59F98BC1F40882895 /* PersistenceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6DA212A93943465362BDAA6 /* PersistenceStore.swift */; };
+		160F12A4A60C7ED0FAD7997C /* LaunchAtLogin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 184469FE2D8648CCF6F6CEED /* LaunchAtLogin.swift */; };
+		F441BA3D58988D2D07CFB9B1 /* NtfyConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28EE1E89FB8A318C5645A71E /* NtfyConnection.swift */; };
+		71F59A47332BD1EECF4CA2B8 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E925D1FB877AE292590B4892 /* NotificationService.swift */; };
+		53338D3231C64A002B406588 /* SubscriptionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 578B565C00D95F8B7CB3F75F /* SubscriptionManager.swift */; };
+		0FF23B257F9459A4DF8513C9 /* ActionRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = C62E69599D39413F180B2247 /* ActionRunner.swift */; };
+		BDB8B0214B4F49B93B44F460 /* NtfyPublisher.swift in Sources */ = {isa = PBXBuildFile; fileRef = D97B4EE2B68F11E8C3E928C2 /* NtfyPublisher.swift */; };
+		199E43BF9E5117FE6291D880 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30A90BFC5D04CBFB4A715281 /* DesignSystem.swift */; };
+		94098FBFC2E7F42BCFDD5DE4 /* MessageRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50E8EB17A06ADCD56D37B73E /* MessageRowView.swift */; };
+		FA3C94C01929B4D3C003ACBB /* MessageDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A36C4FFA91033EB5A54E8B9B /* MessageDetailView.swift */; };
+		E4102BA10ECE38DA80BF178F /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 967F66FA4C824EEB3524B9A1 /* SidebarView.swift */; };
+		CDEA023ECC7894747FCE99EF /* MessageListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 463B28E9B6BFCDAD9B10F9BD /* MessageListView.swift */; };
+		4AED64B6020BDE0EA542FBD2 /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 004047DDB96C97E6D4D1C59B /* MainView.swift */; };
+		59017FEB0D77E5DF65DFF88A /* AddSubscriptionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 017F712ED3400A0B2C3E517C /* AddSubscriptionView.swift */; };
+		679F230A4CD7AC6D1A24E5EE /* ComposeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B1981BFE984386118FE774F /* ComposeView.swift */; };
+		E64506B02A811191046FF3CF /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B400D35D0369F334998DD77C /* SettingsView.swift */; };
+		21A8CC2FE45DF68146E37913 /* MenuPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2073ECF462500AE3524DB7D7 /* MenuPanelView.swift */; };
+		7C52592CFB298BEFDC580235 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FAB5CB8285FF21E8F76C0E19 /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		27359E5A44F2EA4B3F33014E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		D095E09D43D2DFB4D9339B20 /* NtfyMac.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NtfyMac.entitlements; sourceTree = "<group>"; };
+		EBCC0FA85E62ED084705BF13 /* NtfyMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NtfyMacApp.swift; sourceTree = "<group>"; };
+		6C83FE2E7072883F6282826C /* NtfyMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NtfyMessage.swift; sourceTree = "<group>"; };
+		694B53A8C1D8AB0CE8B30E58 /* Subscription.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Subscription.swift; sourceTree = "<group>"; };
+		4437E51AA46B9F5D1BC5D821 /* ConnectionState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionState.swift; sourceTree = "<group>"; };
+		133E3151958765ED069A8935 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
+		D30F1EA242E9D3518CB7A70F /* EmojiMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmojiMap.swift; sourceTree = "<group>"; };
+		A6DA212A93943465362BDAA6 /* PersistenceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistenceStore.swift; sourceTree = "<group>"; };
+		184469FE2D8648CCF6F6CEED /* LaunchAtLogin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchAtLogin.swift; sourceTree = "<group>"; };
+		28EE1E89FB8A318C5645A71E /* NtfyConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NtfyConnection.swift; sourceTree = "<group>"; };
+		E925D1FB877AE292590B4892 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
+		578B565C00D95F8B7CB3F75F /* SubscriptionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionManager.swift; sourceTree = "<group>"; };
+		C62E69599D39413F180B2247 /* ActionRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActionRunner.swift; sourceTree = "<group>"; };
+		D97B4EE2B68F11E8C3E928C2 /* NtfyPublisher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NtfyPublisher.swift; sourceTree = "<group>"; };
+		30A90BFC5D04CBFB4A715281 /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
+		50E8EB17A06ADCD56D37B73E /* MessageRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageRowView.swift; sourceTree = "<group>"; };
+		A36C4FFA91033EB5A54E8B9B /* MessageDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageDetailView.swift; sourceTree = "<group>"; };
+		967F66FA4C824EEB3524B9A1 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
+		463B28E9B6BFCDAD9B10F9BD /* MessageListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageListView.swift; sourceTree = "<group>"; };
+		004047DDB96C97E6D4D1C59B /* MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainView.swift; sourceTree = "<group>"; };
+		017F712ED3400A0B2C3E517C /* AddSubscriptionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddSubscriptionView.swift; sourceTree = "<group>"; };
+		7B1981BFE984386118FE774F /* ComposeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeView.swift; sourceTree = "<group>"; };
+		B400D35D0369F334998DD77C /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		2073ECF462500AE3524DB7D7 /* MenuPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuPanelView.swift; sourceTree = "<group>"; };
+		FAB5CB8285FF21E8F76C0E19 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		D91517BFBDECE389497A425B /* NtfyMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NtfyMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		059DB2086B49B680F85B3555 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		2B731CEFC6751AAE0EC69B98 = {
+			isa = PBXGroup;
+			children = (
+				20F4BD606C0F6D1645AE4919 /* NtfyMac */,
+				86024CAD1E83101D97359D73 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		86024CAD1E83101D97359D73 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				D91517BFBDECE389497A425B /* NtfyMac.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		20F4BD606C0F6D1645AE4919 /* NtfyMac */ = {
+			isa = PBXGroup;
+			children = (
+				EBCC0FA85E62ED084705BF13 /* NtfyMacApp.swift */,
+				A1C86A29E589D48EC70B6A32 /* Models */,
+				609874F33224C0C09F1FEE42 /* Services */,
+				38DF21AEF4612506D6BE5CBE /* Views */,
+				FAB5CB8285FF21E8F76C0E19 /* Assets.xcassets */,
+				27359E5A44F2EA4B3F33014E /* Info.plist */,
+				D095E09D43D2DFB4D9339B20 /* NtfyMac.entitlements */,
+			);
+			path = NtfyMac;
+			sourceTree = "<group>";
+		};
+		A1C86A29E589D48EC70B6A32 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				6C83FE2E7072883F6282826C /* NtfyMessage.swift */,
+				694B53A8C1D8AB0CE8B30E58 /* Subscription.swift */,
+				4437E51AA46B9F5D1BC5D821 /* ConnectionState.swift */,
+				133E3151958765ED069A8935 /* AppSettings.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		609874F33224C0C09F1FEE42 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				D30F1EA242E9D3518CB7A70F /* EmojiMap.swift */,
+				A6DA212A93943465362BDAA6 /* PersistenceStore.swift */,
+				184469FE2D8648CCF6F6CEED /* LaunchAtLogin.swift */,
+				28EE1E89FB8A318C5645A71E /* NtfyConnection.swift */,
+				E925D1FB877AE292590B4892 /* NotificationService.swift */,
+				578B565C00D95F8B7CB3F75F /* SubscriptionManager.swift */,
+				C62E69599D39413F180B2247 /* ActionRunner.swift */,
+				D97B4EE2B68F11E8C3E928C2 /* NtfyPublisher.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		38DF21AEF4612506D6BE5CBE /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				30A90BFC5D04CBFB4A715281 /* DesignSystem.swift */,
+				50E8EB17A06ADCD56D37B73E /* MessageRowView.swift */,
+				A36C4FFA91033EB5A54E8B9B /* MessageDetailView.swift */,
+				967F66FA4C824EEB3524B9A1 /* SidebarView.swift */,
+				463B28E9B6BFCDAD9B10F9BD /* MessageListView.swift */,
+				004047DDB96C97E6D4D1C59B /* MainView.swift */,
+				017F712ED3400A0B2C3E517C /* AddSubscriptionView.swift */,
+				7B1981BFE984386118FE774F /* ComposeView.swift */,
+				B400D35D0369F334998DD77C /* SettingsView.swift */,
+				2073ECF462500AE3524DB7D7 /* MenuPanelView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		42AEFBAE01D2DFD981F7DA7D /* NtfyMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B351D9E61CFAD9F667AA7583 /* Build configuration list for PBXNativeTarget "NtfyMac" */;
+			buildPhases = (
+				FCA229C23F166EBB0BA5029E /* Sources */,
+				059DB2086B49B680F85B3555 /* Frameworks */,
+				B9C6EB6F79FC54535ACB3053 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NtfyMac;
+			productName = NtfyMac;
+			productReference = D91517BFBDECE389497A425B /* NtfyMac.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		46F86FAA6BBF9AC94A7E4595 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					42AEFBAE01D2DFD981F7DA7D = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = 200AD4F23452D049FE3D290D /* Build configuration list for PBXProject "NtfyMac" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 2B731CEFC6751AAE0EC69B98;
+			productRefGroup = 86024CAD1E83101D97359D73 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				42AEFBAE01D2DFD981F7DA7D /* NtfyMac */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		B9C6EB6F79FC54535ACB3053 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7C52592CFB298BEFDC580235 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		FCA229C23F166EBB0BA5029E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				621F952D64187468E4036BF6 /* NtfyMacApp.swift in Sources */,
+				A678E535E4242DBE3F08BD0D /* NtfyMessage.swift in Sources */,
+				6382EDE13024B11E226A17AC /* Subscription.swift in Sources */,
+				E2BF3B4395E483C4613AB145 /* ConnectionState.swift in Sources */,
+				6FD74C01CB423E7445B6C5A0 /* AppSettings.swift in Sources */,
+				666703F1978C471644EF9E76 /* EmojiMap.swift in Sources */,
+				466B1DD59F98BC1F40882895 /* PersistenceStore.swift in Sources */,
+				160F12A4A60C7ED0FAD7997C /* LaunchAtLogin.swift in Sources */,
+				F441BA3D58988D2D07CFB9B1 /* NtfyConnection.swift in Sources */,
+				71F59A47332BD1EECF4CA2B8 /* NotificationService.swift in Sources */,
+				53338D3231C64A002B406588 /* SubscriptionManager.swift in Sources */,
+				0FF23B257F9459A4DF8513C9 /* ActionRunner.swift in Sources */,
+				BDB8B0214B4F49B93B44F460 /* NtfyPublisher.swift in Sources */,
+				199E43BF9E5117FE6291D880 /* DesignSystem.swift in Sources */,
+				94098FBFC2E7F42BCFDD5DE4 /* MessageRowView.swift in Sources */,
+				FA3C94C01929B4D3C003ACBB /* MessageDetailView.swift in Sources */,
+				E4102BA10ECE38DA80BF178F /* SidebarView.swift in Sources */,
+				CDEA023ECC7894747FCE99EF /* MessageListView.swift in Sources */,
+				4AED64B6020BDE0EA542FBD2 /* MainView.swift in Sources */,
+				59017FEB0D77E5DF65DFF88A /* AddSubscriptionView.swift in Sources */,
+				679F230A4CD7AC6D1A24E5EE /* ComposeView.swift in Sources */,
+				E64506B02A811191046FF3CF /* SettingsView.swift in Sources */,
+				21A8CC2FE45DF68146E37913 /* MenuPanelView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		6F0B85FC643AF9C218F627EA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		1B05A9D10F61E514E88AF240 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		D87348BDE86A31AE1A1C3907 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = NtfyMac/NtfyMac.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = NtfyMac/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ntfymac.NtfyMac;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Debug;
+		};
+		024EEA213129F6CB818D8A64 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = NtfyMac/NtfyMac.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = NtfyMac/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ntfymac.NtfyMac;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		200AD4F23452D049FE3D290D /* Build configuration list for PBXProject "NtfyMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6F0B85FC643AF9C218F627EA /* Debug */,
+				1B05A9D10F61E514E88AF240 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B351D9E61CFAD9F667AA7583 /* Build configuration list for PBXNativeTarget "NtfyMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D87348BDE86A31AE1A1C3907 /* Debug */,
+				024EEA213129F6CB818D8A64 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 46F86FAA6BBF9AC94A7E4595 /* Project object */;
+}
