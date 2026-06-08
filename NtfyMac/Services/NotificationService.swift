@@ -81,7 +81,19 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
             content: content,
             trigger: nil
         )
-        center.add(request)
+        center.add(request) { error in
+            if let error {
+                NSLog("Failed to deliver notification: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Reads the current authorization status (for surfacing in the UI when the
+    /// user hasn't granted permission yet).
+    nonisolated func currentAuthorizationStatus(_ completion: @escaping (UNAuthorizationStatus) -> Void) {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            DispatchQueue.main.async { completion(settings.authorizationStatus) }
+        }
     }
 
     private func interruptionLevel(for priority: NtfyPriority) -> UNNotificationInterruptionLevel {

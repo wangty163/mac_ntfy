@@ -4,10 +4,26 @@
 //
 
 import SwiftUI
+import UserNotifications
 
 struct SettingsView: View {
     @EnvironmentObject var settings: AppSettings
     @EnvironmentObject var manager: SubscriptionManager
+    @State private var authStatus: UNAuthorizationStatus = .notDetermined
+
+    private var authIsGranted: Bool {
+        authStatus == .authorized || authStatus == .provisional
+    }
+
+    private var authStatusText: String {
+        switch authStatus {
+        case .authorized: return "Notifications allowed"
+        case .provisional: return "Notifications allowed (quiet)"
+        case .denied: return "Notifications denied"
+        case .notDetermined: return "Notification permission not requested yet"
+        @unknown default: return "Unknown notification status"
+        }
+    }
 
     var body: some View {
         TabView {
@@ -27,6 +43,7 @@ struct SettingsView: View {
             Section {
                 TextField("Default server", text: $settings.defaultServer)
                 Toggle("Launch at login", isOn: $settings.launchAtLogin)
+                Toggle("Show window at launch", isOn: $settings.openWindowAtLaunch)
                 Toggle("Show unread count in menu bar", isOn: $settings.showMenuBarCount)
             }
             Section("History") {
@@ -42,6 +59,25 @@ struct SettingsView: View {
 
     private var notificationsTab: some View {
         Form {
+            Section("Permission") {
+                HStack {
+                    Image(systemName: authIsGranted ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                        .foregroundStyle(authIsGranted ? .green : .orange)
+                    Text(authStatusText)
+                    Spacer()
+                    if !authIsGranted {
+                        Button("Open Settings") {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                    }
+                }
+                if !authIsGranted {
+                    Text("macOS won't show notifications until permission is granted. If this app isn't listed in System Settings, the build may be unsigned — install a signed release.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
             Section {
                 Toggle("Show macOS notifications", isOn: $settings.showNotifications)
                 Toggle("Play sound", isOn: $settings.playSound)
@@ -65,6 +101,11 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .onAppear { refreshAuthStatus() }
+    }
+
+    private func refreshAuthStatus() {
+        NotificationService.shared.currentAuthorizationStatus { authStatus = $0 }
     }
 
     private var aboutTab: some View {
