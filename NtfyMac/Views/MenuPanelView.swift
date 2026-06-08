@@ -106,12 +106,8 @@ struct MenuPanelView: View {
             }
             .help("Mark all as read")
 
-            Button {
-                openSettingsWindow()
-            } label: {
-                Image(systemName: "gearshape")
-            }
-            .help("Settings")
+            settingsButton
+                .help("Settings")
 
             Spacer()
 
@@ -126,19 +122,44 @@ struct MenuPanelView: View {
         .padding(12)
     }
 
+    /// Opens Settings reliably: the official `openSettings` action on macOS 14+,
+    /// falling back to the responder-chain selector on macOS 13.
+    @ViewBuilder
+    private var settingsButton: some View {
+        if #available(macOS 14.0, *) {
+            ModernSettingsButton()
+        } else {
+            Button {
+                AppActivation.enterWindowMode()
+                if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
+                    NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+                }
+            } label: {
+                Image(systemName: "gearshape")
+            }
+        }
+    }
+
     private func openMain() {
         // Become a regular app so the window is a normal, standalone window
         // (its own Stage Manager stage, Mission Control entry, etc.).
         AppActivation.enterWindowMode()
         openWindow(id: "main")
     }
+}
 
-    /// Opens the SwiftUI `Settings` scene in a version-compatible way
-    /// (`openSettings` environment value is only available on macOS 14+).
-    private func openSettingsWindow() {
-        AppActivation.enterWindowMode()
-        if NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) { return }
-        NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+/// Settings button for macOS 14+, using the official `openSettings` action.
+@available(macOS 14.0, *)
+private struct ModernSettingsButton: View {
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        Button {
+            AppActivation.enterWindowMode()
+            openSettings()
+        } label: {
+            Image(systemName: "gearshape")
+        }
     }
 }
 
