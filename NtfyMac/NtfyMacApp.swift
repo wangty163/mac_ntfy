@@ -185,8 +185,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Reopening the app (clicking the Dock icon, or relaunching while already
+    /// running) should surface the main window. AppKit's default reopen doesn't
+    /// recreate a closed SwiftUI `Window` scene, so when no window is visible we
+    /// open one explicitly through the `MainWindow` bridge.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        true
+        if !flag {
+            Task { @MainActor in MainWindow.show() }
+        }
+        return true
     }
 
     /// Keep running as a menu-bar agent after the main window is closed.
