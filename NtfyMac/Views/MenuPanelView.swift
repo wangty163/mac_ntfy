@@ -148,16 +148,13 @@ struct MenuPanelView: View {
     }
 }
 
-/// Settings button for macOS 14+, using the official `openSettings` action.
+/// Settings button for macOS 14+, using the official `SettingsLink`, which
+/// opens the `Settings` scene reliably. Focus is handled by `SettingsView`'s
+/// `onAppear` (which promotes the app to a regular, front window).
 @available(macOS 14.0, *)
 private struct ModernSettingsButton: View {
-    @Environment(\.openSettings) private var openSettings
-
     var body: some View {
-        Button {
-            AppActivation.enterWindowMode()
-            openSettings()
-        } label: {
+        SettingsLink {
             Image(systemName: "gearshape")
         }
     }
