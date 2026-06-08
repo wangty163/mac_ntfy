@@ -2,8 +2,9 @@
 //  NtfyMacApp.swift
 //  NtfyMac
 //
-//  App entry point. Runs as a menu-bar (LSUIElement) agent so it stays alive in
-//  the background receiving messages, with an optional main window + settings.
+//  App entry point. Opens a normal main window at launch, then drops to a
+//  menu-bar agent (.accessory, no Dock icon) once the window is closed, so it
+//  keeps receiving messages in the background.
 //
 
 import SwiftUI
@@ -56,18 +57,15 @@ struct NtfyMacApp: App {
     }
 }
 
-/// Renders the menu-bar icon, optionally badged with the unread count.
+/// Renders the menu-bar icon. A fixed bell glyph (no live text) so the status
+/// item never animates or shifts; the badged variant signals unread messages.
 struct MenuBarLabel: View {
     @EnvironmentObject var manager: SubscriptionManager
     @EnvironmentObject var settings: AppSettings
 
     var body: some View {
-        if settings.showMenuBarCount && manager.totalUnread > 0 {
-            let count = manager.totalUnread
-            Label("\(count)", systemImage: "bell.badge.fill")
-        } else {
-            Image(systemName: "bell.fill")
-        }
+        let showBadge = settings.showMenuBarCount && manager.totalUnread > 0
+        Image(systemName: showBadge ? "bell.badge.fill" : "bell.fill")
     }
 }
 
@@ -120,24 +118,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         DispatchQueue.main.async {
             if showWindow {
-                // Open straight into the main window as a normal, standalone
-                // window (own Stage Manager stage + Dock icon).
+                // The app launches as a regular app, so the `Window` scene
+                // opens automatically — just bring it forward.
                 AppActivation.enterWindowMode()
                 NSApp.windows
                     .first(where: { $0.identifier?.rawValue.hasPrefix("main") == true })?
                     .makeKeyAndOrderFront(nil)
             } else {
-                // Start as a menu-bar-only agent; close the auto-opened window.
-                NSApp.setActivationPolicy(.accessory)
+                // Start as a menu-bar-only agent: close the auto-opened window
+                // and drop the Dock icon.
                 for window in NSApp.windows where window.identifier?.rawValue.hasPrefix("main") == true {
                     window.close()
                 }
+                NSApp.setActivationPolicy(.accessory)
             }
         }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         true
+    }
+
+    /// Keep running as a menu-bar agent after the main window is closed.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
     }
 
     /// If another copy of this app is already running, hand off to it and quit,
