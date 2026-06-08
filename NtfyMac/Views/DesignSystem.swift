@@ -134,7 +134,8 @@ final class RelativeClock: ObservableObject {
         // 30s cadence: fine enough that a "minute ago" label is never more than
         // ~30s stale, while staying cheap.
         let timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.now = Date() }
+            guard let self else { return }
+            Task { @MainActor in self.now = Date() }
         }
         // Keep ticking while the user interacts with menus/scrolls.
         RunLoop.main.add(timer, forMode: .common)
