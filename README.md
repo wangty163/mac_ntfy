@@ -47,11 +47,8 @@ Every push builds an unsigned `.app` **and** a `.dmg` as CI artifacts (see the
 the DMG on the **Releases** page.
 
 Because the builds are **unsigned**, macOS Gatekeeper blocks the first launch.
-Either right-click the app → **Open** → **Open**, or clear the quarantine flag:
-
-```bash
-xattr -dr com.apple.quarantine "/Applications/NtfyMac.app"
-```
+Right-click (or Control-click) the app → **Open** → **Open**. You only need to
+do this once; afterwards it launches normally.
 
 ## 🏷 Cutting a release
 

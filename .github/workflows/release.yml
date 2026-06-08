@@ -101,7 +101,5 @@ jobs:
             1. Download `NtfyMac-${{ steps.version.outputs.version }}.dmg` below.
             2. Open it and drag **Ntfy** into **Applications**.
             3. Because the build is **unsigned**, the first launch is blocked by
-               Gatekeeper. Right-click the app → **Open** → **Open**, or run:
-               ```bash
-               xattr -dr com.apple.quarantine "/Applications/NtfyMac.app"
-               ```
+               Gatekeeper. Right-click (or Control-click) the app → **Open** →
+               **Open**. You only need to do this once.
