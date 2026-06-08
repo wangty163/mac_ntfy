@@ -26,6 +26,18 @@ struct NtfyMacApp: App {
     }
 
     var body: some Scene {
+        // Full management window. Declared first so it is the app's primary
+        // scene and opens at launch.
+        Window("Ntfy", id: "main") {
+            MainView()
+                .environmentObject(manager)
+                .environmentObject(settings)
+        }
+        .defaultSize(width: 1000, height: 640)
+        .commands {
+            CommandGroup(replacing: .newItem) {}
+        }
+
         // Menu-bar entry — the always-available control surface.
         MenuBarExtra {
             MenuPanelView()
@@ -37,17 +49,6 @@ struct NtfyMacApp: App {
                 .environmentObject(settings)
         }
         .menuBarExtraStyle(.window)
-
-        // Full management window, opened on demand.
-        Window("Ntfy", id: "main") {
-            MainView()
-                .environmentObject(manager)
-                .environmentObject(settings)
-        }
-        .defaultSize(width: 1000, height: 640)
-        .commands {
-            CommandGroup(replacing: .newItem) {}
-        }
 
         Settings {
             SettingsView()
@@ -62,10 +63,31 @@ struct NtfyMacApp: App {
 struct MenuBarLabel: View {
     @EnvironmentObject var manager: SubscriptionManager
     @EnvironmentObject var settings: AppSettings
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         let showBadge = settings.showMenuBarCount && manager.totalUnread > 0
         Image(systemName: showBadge ? "bell.badge.fill" : "bell.fill")
+            .task {
+                // The menu-bar label is the one view guaranteed to exist at
+                // launch, so use it to reliably open the main window once.
+                guard settings.openWindowAtLaunch else { return }
+                LaunchWindowOpener.runOnce {
+                    AppActivation.enterWindowMode()
+                    openWindow(id: "main")
+                }
+            }
+    }
+}
+
+/// Ensures the launch window is opened at most once.
+@MainActor
+enum LaunchWindowOpener {
+    private static var didRun = false
+    static func runOnce(_ action: () -> Void) {
+        guard !didRun else { return }
+        didRun = true
+        action()
     }
 }
 
