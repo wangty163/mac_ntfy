@@ -88,6 +88,16 @@ jobs:
           echo "Found: $APP_PATH"
           cp -R "$APP_PATH" build/export/
 
+      - name: Ad-hoc code sign
+        # macOS only delivers UNUserNotificationCenter notifications for signed
+        # apps. We have no Apple Developer identity in CI, so ad-hoc sign (`-`)
+        # with hardened runtime — enough for local notifications once the user
+        # clears the quarantine flag.
+        run: |
+          APP_PATH="$(find build/export -maxdepth 1 -name '*.app' -print -quit)"
+          codesign --force --deep --options runtime --sign - "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
       - name: Upload .app artifact
         uses: actions/upload-artifact@v4
         with:

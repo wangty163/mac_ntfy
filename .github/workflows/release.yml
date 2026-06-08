@@ -59,6 +59,13 @@ jobs:
           echo "Found: $APP_PATH"
           cp -R "$APP_PATH" build/export/
 
+      - name: Ad-hoc code sign
+        # Required so macOS delivers UNUserNotificationCenter notifications.
+        run: |
+          APP_PATH="$(find build/export -maxdepth 1 -name '*.app' -print -quit)"
+          codesign --force --deep --options runtime --sign - "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
       - name: Package DMG
         run: |
           APP_PATH="$(find build/export -maxdepth 1 -name '*.app' -print -quit)"

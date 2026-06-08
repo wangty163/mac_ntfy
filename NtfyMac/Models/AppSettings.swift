@@ -18,6 +18,7 @@ final class AppSettings: ObservableObject {
         static let historyLimit = "historyLimitPerTopic"
         static let launchAtLogin = "launchAtLogin"
         static let showMenuBarCount = "showMenuBarCount"
+        static let openWindowAtLaunch = "openWindowAtLaunch"
     }
 
     @Published var defaultServer: String {
@@ -39,6 +40,11 @@ final class AppSettings: ObservableObject {
     @Published var showMenuBarCount: Bool {
         didSet { defaults.set(showMenuBarCount, forKey: Keys.showMenuBarCount) }
     }
+    /// Show the main window when the app launches (off = start in the menu bar
+    /// only, useful when launching at login).
+    @Published var openWindowAtLaunch: Bool {
+        didSet { defaults.set(openWindowAtLaunch, forKey: Keys.openWindowAtLaunch) }
+    }
     @Published var launchAtLogin: Bool {
         didSet {
             defaults.set(launchAtLogin, forKey: Keys.launchAtLogin)
@@ -57,6 +63,7 @@ final class AppSettings: ObservableObject {
             Keys.minPriority: 1,
             Keys.historyLimit: 200,
             Keys.showMenuBarCount: true,
+            Keys.openWindowAtLaunch: true,
         ])
         defaultServer = defaults.string(forKey: Keys.defaultServer) ?? "https://ntfy.sh"
         showNotifications = defaults.bool(forKey: Keys.showNotifications)
@@ -64,6 +71,7 @@ final class AppSettings: ObservableObject {
         minNotificationPriority = defaults.integer(forKey: Keys.minPriority)
         historyLimitPerTopic = defaults.integer(forKey: Keys.historyLimit)
         showMenuBarCount = defaults.bool(forKey: Keys.showMenuBarCount)
+        openWindowAtLaunch = defaults.bool(forKey: Keys.openWindowAtLaunch)
         launchAtLogin = LaunchAtLogin.isEnabled
     }
 }
