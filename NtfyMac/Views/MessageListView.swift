@@ -64,13 +64,19 @@ struct MessageListView: View {
                         }
                         .padding(12)
                     }
-                    .onChange(of: manager.pendingReveal?.messageID) { _ in
-                        if let reveal = manager.pendingReveal {
-                            let id = "\(reveal.subscriptionID.uuidString)::\(reveal.messageID)"
-                            selectedMessageID = id
-                            withAnimation { proxy.scrollTo(id, anchor: .top) }
-                            manager.pendingReveal = nil
-                        }
+                    // `.task(id:)` fires both on change and when this view first
+                    // appears, so a reveal queued before the window opened (e.g.
+                    // tapping a notification while closed) still selects/scrolls
+                    // to the message.
+                    .task(id: manager.pendingReveal?.messageID) {
+                        guard let reveal = manager.pendingReveal else { return }
+                        let id = "\(reveal.subscriptionID.uuidString)::\(reveal.messageID)"
+                        // Give a freshly-opened window a moment to lay out its
+                        // list before selecting/scrolling.
+                        try? await Task.sleep(nanoseconds: 150_000_000)
+                        selectedMessageID = id
+                        withAnimation { proxy.scrollTo(id, anchor: .top) }
+                        manager.pendingReveal = nil
                     }
                 }
             }

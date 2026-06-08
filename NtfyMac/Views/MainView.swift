@@ -33,7 +33,10 @@ struct MainView: View {
             AddSubscriptionView(editing: sub)
         }
         .onChange(of: selection) { _ in selectedMessageID = nil }
-        .onChange(of: manager.pendingReveal?.subscriptionID) { _ in
+        // `.task(id:)` (rather than `.onChange`) so a reveal that was queued
+        // before this view existed — e.g. a notification clicked while the
+        // window was closed — is still honoured when the view first appears.
+        .task(id: manager.pendingReveal?.subscriptionID) {
             if let reveal = manager.pendingReveal {
                 selection = .subscription(reveal.subscriptionID)
             }

@@ -70,13 +70,41 @@ struct MenuBarLabel: View {
         Image(systemName: showBadge ? "bell.badge.fill" : "bell.fill")
             .task {
                 // The menu-bar label is the one view guaranteed to exist at
-                // launch, so use it to reliably open the main window once.
+                // launch, so use it to (a) expose `openWindow` to non-SwiftUI
+                // code (e.g. notification clicks) and (b) reliably open the main
+                // window once at launch.
+                MainWindow.open = { openWindow(id: "main") }
+
                 guard settings.openWindowAtLaunch else { return }
                 LaunchWindowOpener.runOnce {
-                    AppActivation.enterWindowMode()
-                    openWindow(id: "main")
+                    MainWindow.show()
                 }
             }
+    }
+}
+
+/// Bridges window opening to non-SwiftUI code (notification clicks, the menu
+/// bar) so that revealing a message can both surface the window and bring the
+/// app forward, regardless of whether it's currently a menu-bar agent.
+@MainActor
+enum MainWindow {
+    /// Registered by a SwiftUI view that owns the `openWindow` environment
+    /// action. Calling it opens the "main" window scene (or focuses it if it
+    /// already exists).
+    static var open: (() -> Void)?
+
+    /// Promotes the app to a regular window app and brings the main window to
+    /// the front, recreating it if it was previously closed.
+    static func show() {
+        AppActivation.enterWindowMode()
+        if let open {
+            open()
+        } else if let window = NSApp.windows.first(where: {
+            $0.identifier?.rawValue.hasPrefix("main") == true
+        }) {
+            // Fallback if the SwiftUI action hasn't been registered yet.
+            window.makeKeyAndOrderFront(nil)
+        }
     }
 }
 

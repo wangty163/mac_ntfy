@@ -33,7 +33,10 @@ final class SubscriptionManager: ObservableObject {
 
         NotificationService.shared.onActivated = { [weak self] subID, messageID in
             self?.markRead(subscriptionID: subID, messageID: messageID)
+            // Set the reveal target *before* surfacing the window so the views
+            // pick it up as they appear (the window may be closed at this point).
             self?.pendingReveal = (subID, messageID)
+            MainWindow.show()
         }
 
         startMonitoring()
