@@ -23,26 +23,35 @@ struct PublishRequest {
 @MainActor
 enum NtfyPublisher {
     static func publish(_ req: PublishRequest, to subscription: Subscription) async throws {
-        guard let url = URL(string: subscription.topicURLString) else {
+        // Publish using ntfy's JSON body API (POST to the server root with the
+        // topic in the payload) rather than the header API. HTTP header values
+        // can't reliably carry non-ASCII text, so a header-based title/tags
+        // would mangle or drop Unicode (e.g. Chinese, emoji); a JSON body is
+        // UTF-8 throughout.
+        guard let url = URL(string: subscription.normalizedBaseURL) else {
             throw URLError(.badURL)
         }
+
+        var payload: [String: Any] = [
+            "topic": subscription.topic,
+            "message": req.message,
+            "priority": req.priority,
+        ]
+        if !req.title.isEmpty { payload["title"] = req.title }
+        if !req.tags.isEmpty { payload["tags"] = req.tags }
+        if !req.click.isEmpty { payload["click"] = req.click }
+        if !req.delay.isEmpty { payload["delay"] = req.delay }
+        if !req.attachURL.isEmpty { payload["attach"] = req.attachURL }
+        if !req.email.isEmpty { payload["email"] = req.email }
+        if req.markdown { payload["markdown"] = true }
+
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let auth = subscription.auth.authorizationHeader {
             request.setValue(auth, forHTTPHeaderField: "Authorization")
         }
-        if !req.title.isEmpty { request.setValue(req.title, forHTTPHeaderField: "Title") }
-        request.setValue(String(req.priority), forHTTPHeaderField: "Priority")
-        if !req.tags.isEmpty {
-            request.setValue(req.tags.joined(separator: ","), forHTTPHeaderField: "Tags")
-        }
-        if !req.click.isEmpty { request.setValue(req.click, forHTTPHeaderField: "Click") }
-        if !req.delay.isEmpty { request.setValue(req.delay, forHTTPHeaderField: "Delay") }
-        if !req.attachURL.isEmpty { request.setValue(req.attachURL, forHTTPHeaderField: "Attach") }
-        if !req.email.isEmpty { request.setValue(req.email, forHTTPHeaderField: "Email") }
-        if req.markdown { request.setValue("text/markdown", forHTTPHeaderField: "Content-Type") }
-
-        request.httpBody = Data(req.message.utf8)
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
         let (_, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
