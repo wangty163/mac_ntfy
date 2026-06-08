@@ -145,18 +145,24 @@ final class RelativeClock: ObservableObject {
 
 /// A relative timestamp ("2 minutes ago") that refreshes itself over time.
 ///
-/// `Text(date, format: .relative(...))` is evaluated relative to *now* only when
-/// the view's body runs, so on its own it would freeze. Observing the shared
-/// `RelativeClock` re-runs `body` on every tick, recomputing the label against
-/// the current time.
+/// Note we render a plain `String`, not `Text(date, format: .relative(...))`.
+/// A format-style `Text` keeps the same `date`/format identity on every render,
+/// so SwiftUI diffs it as unchanged and caches the formatted output — the label
+/// would freeze even though `body` re-runs. Computing the string ourselves
+/// against the shared `RelativeClock`'s ticking `now` yields a value that
+/// actually changes over time, so the view updates.
 struct RelativeTimeText: View {
     let date: Date
     @ObservedObject private var clock = RelativeClock.shared
 
+    private static let formatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        formatter.dateTimeStyle = .numeric
+        return formatter
+    }()
+
     var body: some View {
-        // Reference `clock.now` so the dependency is tracked and the label
-        // recomputes on each tick.
-        let _ = clock.now
-        Text(date, format: .relative(presentation: .numeric))
+        Text(Self.formatter.localizedString(for: date, relativeTo: clock.now))
     }
 }
