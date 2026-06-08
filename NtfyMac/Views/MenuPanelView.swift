@@ -174,7 +174,7 @@ struct MenuMessageRow: View {
                 HStack {
                     Text(title).font(.subheadline.weight(.semibold)).lineLimit(1)
                     Spacer()
-                    Text(stored.message.date, format: .relative(presentation: .numeric))
+                    RelativeTimeText(date: stored.message.date)
                         .font(.caption2).foregroundStyle(.secondary).fixedSize()
                 }
                 if let body = stored.message.message, !body.isEmpty {

@@ -114,3 +114,22 @@ struct StatusDot: View {
             )
     }
 }
+
+/// A relative timestamp ("2 minutes ago") that refreshes itself over time.
+///
+/// `Text(date, format: .relative(...))` is rendered only once, so a label that
+/// said "1 minute ago" would stay frozen even as more time passed. Driving it
+/// from a `TimelineView` re-evaluates the formatter on a periodic schedule so
+/// the displayed age stays current.
+struct RelativeTimeText: View {
+    let date: Date
+    /// How often to re-render. Minute granularity matches the formatter's
+    /// resolution for anything older than a minute while staying cheap.
+    var interval: TimeInterval = 60
+
+    var body: some View {
+        TimelineView(.periodic(from: date, by: interval)) { _ in
+            Text(date, format: .relative(presentation: .numeric))
+        }
+    }
+}
