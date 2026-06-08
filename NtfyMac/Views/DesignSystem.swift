@@ -115,21 +115,47 @@ struct StatusDot: View {
     }
 }
 
+/// A shared ticking clock that periodically publishes the current time so that
+/// relative-time labels across the UI can refresh in lockstep.
+///
+/// A single timer drives every label, which is cheaper than one timer per row
+/// and—unlike `TimelineView(.periodic(from:by:))`, which can quietly stop
+/// firing on macOS when a window is occluded or App Nap kicks in—reliably keeps
+/// updating as long as the app's run loop is alive.
+@MainActor
+final class RelativeClock: ObservableObject {
+    static let shared = RelativeClock()
+
+    @Published private(set) var now = Date()
+
+    private var timer: Timer?
+
+    private init() {
+        // 30s cadence: fine enough that a "minute ago" label is never more than
+        // ~30s stale, while staying cheap.
+        let timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.now = Date() }
+        }
+        // Keep ticking while the user interacts with menus/scrolls.
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+}
+
 /// A relative timestamp ("2 minutes ago") that refreshes itself over time.
 ///
-/// `Text(date, format: .relative(...))` is rendered only once, so a label that
-/// said "1 minute ago" would stay frozen even as more time passed. Driving it
-/// from a `TimelineView` re-evaluates the formatter on a periodic schedule so
-/// the displayed age stays current.
+/// `Text(date, format: .relative(...))` is evaluated relative to *now* only when
+/// the view's body runs, so on its own it would freeze. Observing the shared
+/// `RelativeClock` re-runs `body` on every tick, recomputing the label against
+/// the current time.
 struct RelativeTimeText: View {
     let date: Date
-    /// How often to re-render. Minute granularity matches the formatter's
-    /// resolution for anything older than a minute while staying cheap.
-    var interval: TimeInterval = 60
+    @ObservedObject private var clock = RelativeClock.shared
 
     var body: some View {
-        TimelineView(.periodic(from: date, by: interval)) { _ in
-            Text(date, format: .relative(presentation: .numeric))
-        }
+        // Reference `clock.now` so the dependency is tracked and the label
+        // recomputes on each tick.
+        let _ = clock.now
+        Text(date, format: .relative(presentation: .numeric))
     }
 }
