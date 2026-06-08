@@ -43,6 +43,8 @@ struct MenuPanelView: View {
             footer
         }
         .frame(width: 360)
+        // Update instantly when content changes — no sliding/fly-in animations.
+        .transaction { $0.animation = nil }
     }
 
     private var header: some View {
