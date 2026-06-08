@@ -125,14 +125,16 @@ struct MenuPanelView: View {
     }
 
     private func openMain() {
-        NSApp.activate(ignoringOtherApps: true)
+        // Become a regular app so the window is a normal, standalone window
+        // (its own Stage Manager stage, Mission Control entry, etc.).
+        AppActivation.enterWindowMode()
         openWindow(id: "main")
     }
 
     /// Opens the SwiftUI `Settings` scene in a version-compatible way
     /// (`openSettings` environment value is only available on macOS 14+).
     private func openSettingsWindow() {
-        NSApp.activate(ignoringOtherApps: true)
+        AppActivation.enterWindowMode()
         if NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) { return }
         NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
     }

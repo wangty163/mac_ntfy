@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import AppKit
 
 @main
 struct NtfyMacApp: App {
@@ -69,9 +70,42 @@ struct MenuBarLabel: View {
     }
 }
 
-/// Keeps the app running without a Dock icon and ensures the window can be
-/// reopened from the menu bar.
+/// Controls how the app appears to the system. It normally runs as a menu-bar
+/// `.accessory` (no Dock icon), but switches to a regular app while a real
+/// window is open so the window behaves like any other — including getting its
+/// own stage under Stage Manager and appearing in Mission Control.
+enum AppActivation {
+    /// Promote to a regular, front-facing app (call before opening a window).
+    static func enterWindowMode() {
+        if NSApp.activationPolicy() != .regular {
+            NSApp.setActivationPolicy(.regular)
+        }
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Demote back to a menu-bar agent once no normal windows remain open.
+    static func exitWindowModeIfNeeded() {
+        DispatchQueue.main.async {
+            let hasNormalWindow = NSApp.windows.contains { window in
+                window.isVisible
+                    && !(window is NSPanel)
+                    && window.styleMask.contains(.titled)
+                    && window.canBecomeMain
+            }
+            if !hasNormalWindow && NSApp.activationPolicy() != .accessory {
+                NSApp.setActivationPolicy(.accessory)
+            }
+        }
+    }
+}
+
+/// Keeps the app running as a single background instance and tidies up the
+/// auto-opened window at launch.
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        enforceSingleInstance()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Menu-bar agent: no Dock icon, survives the last window closing.
         NSApp.setActivationPolicy(.accessory)
@@ -88,5 +122,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         true
+    }
+
+    /// If another copy of this app is already running, hand off to it and quit,
+    /// so launching the app repeatedly never spawns duplicate instances.
+    private func enforceSingleInstance() {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return }
+        let myPID = ProcessInfo.processInfo.processIdentifier
+        let others = NSRunningApplication
+            .runningApplications(withBundleIdentifier: bundleID)
+            .filter { $0.processIdentifier != myPID }
+
+        if let existing = others.first {
+            existing.activate(options: [.activateAllWindows])
+            NSApp.terminate(nil)
+        }
     }
 }

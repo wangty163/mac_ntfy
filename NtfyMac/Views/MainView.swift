@@ -38,6 +38,7 @@ struct MainView: View {
                 selection = .subscription(reveal.subscriptionID)
             }
         }
+        .onDisappear { AppActivation.exitWindowModeIfNeeded() }
     }
 
     @ViewBuilder
