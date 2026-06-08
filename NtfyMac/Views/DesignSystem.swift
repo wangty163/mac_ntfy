@@ -96,11 +96,12 @@ struct Chip: View {
     }
 }
 
-/// Colored dot used to indicate a subscription / connection.
+/// Colored dot used to indicate a subscription / connection. Static (no
+/// animation): a perpetual `repeatForever` animation here caused the menu panel
+/// to continuously re-animate its layout.
 struct StatusDot: View {
     let color: Color
     var pulsing: Bool = false
-    @State private var animate = false
 
     var body: some View {
         Circle()
@@ -108,16 +109,8 @@ struct StatusDot: View {
             .frame(width: 8, height: 8)
             .overlay(
                 Circle()
-                    .stroke(color.opacity(0.5), lineWidth: 4)
-                    .scaleEffect(animate ? 2 : 1)
-                    .opacity(animate ? 0 : 1)
-                    .opacity(pulsing ? 1 : 0)
+                    .strokeBorder(color.opacity(pulsing ? 0.35 : 0), lineWidth: 3)
+                    .frame(width: 14, height: 14)
             )
-            .onAppear {
-                guard pulsing else { return }
-                withAnimation(.easeOut(duration: 1.4).repeatForever(autoreverses: false)) {
-                    animate = true
-                }
-            }
     }
 }

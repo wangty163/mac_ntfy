@@ -35,6 +35,7 @@ struct SettingsView: View {
                 .tabItem { Label("About", systemImage: "info.circle") }
         }
         .frame(width: 460, height: 380)
+        .onAppear { AppActivation.enterWindowMode() }
         .onDisappear { AppActivation.exitWindowModeIfNeeded() }
     }
 

@@ -43,6 +43,8 @@ struct MenuPanelView: View {
             footer
         }
         .frame(width: 360)
+        // Update instantly when content changes — no sliding/fly-in animations.
+        .transaction { $0.animation = nil }
     }
 
     private var header: some View {
@@ -104,12 +106,8 @@ struct MenuPanelView: View {
             }
             .help("Mark all as read")
 
-            Button {
-                openSettingsWindow()
-            } label: {
-                Image(systemName: "gearshape")
-            }
-            .help("Settings")
+            settingsButton
+                .help("Settings")
 
             Spacer()
 
@@ -124,19 +122,41 @@ struct MenuPanelView: View {
         .padding(12)
     }
 
+    /// Opens Settings reliably: the official `openSettings` action on macOS 14+,
+    /// falling back to the responder-chain selector on macOS 13.
+    @ViewBuilder
+    private var settingsButton: some View {
+        if #available(macOS 14.0, *) {
+            ModernSettingsButton()
+        } else {
+            Button {
+                AppActivation.enterWindowMode()
+                if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
+                    NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+                }
+            } label: {
+                Image(systemName: "gearshape")
+            }
+        }
+    }
+
     private func openMain() {
         // Become a regular app so the window is a normal, standalone window
         // (its own Stage Manager stage, Mission Control entry, etc.).
         AppActivation.enterWindowMode()
         openWindow(id: "main")
     }
+}
 
-    /// Opens the SwiftUI `Settings` scene in a version-compatible way
-    /// (`openSettings` environment value is only available on macOS 14+).
-    private func openSettingsWindow() {
-        AppActivation.enterWindowMode()
-        if NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) { return }
-        NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+/// Settings button for macOS 14+, using the official `SettingsLink`, which
+/// opens the `Settings` scene reliably. Focus is handled by `SettingsView`'s
+/// `onAppear` (which promotes the app to a regular, front window).
+@available(macOS 14.0, *)
+private struct ModernSettingsButton: View {
+    var body: some View {
+        SettingsLink {
+            Image(systemName: "gearshape")
+        }
     }
 }
 
