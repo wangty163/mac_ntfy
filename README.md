@@ -44,11 +44,7 @@ in the background and reconnects automatically.
 
 Every push builds an unsigned `.app` **and** a `.dmg` as CI artifacts (see the
 **Actions** tab → latest **Build** run → *Artifacts*). Tagged releases publish
-the DMG on the **Releases** page:
-
-```bash
-git tag v1.0.0 && git push origin v1.0.0   # triggers the Release workflow
-```
+the DMG on the **Releases** page.
 
 Because the builds are **unsigned**, macOS Gatekeeper blocks the first launch.
 Either right-click the app → **Open** → **Open**, or clear the quarantine flag:
@@ -56,6 +52,27 @@ Either right-click the app → **Open** → **Open**, or clear the quarantine fl
 ```bash
 xattr -dr com.apple.quarantine "/Applications/NtfyMac.app"
 ```
+
+## 🏷 Cutting a release
+
+The **Release** workflow (`.github/workflows/release.yml`) builds a Release
+`.app`, packages it into `NtfyMac-<version>.dmg`, and publishes a GitHub
+Release with the DMG attached. Trigger it either way:
+
+**A. From the GitHub UI** — *Actions* → **Release** → **Run workflow** → set
+`tag` to e.g. `v1.0.0` → **Run workflow**. The tag is created at the chosen
+commit automatically (no `git push --tags` needed).
+
+**B. By pushing a tag** — from a clone with push access:
+
+```bash
+git pull origin main
+git tag v1.0.0
+git push origin v1.0.0          # triggers the Release workflow
+```
+
+Both produce an identical release. Use [semver](https://semver.org/) tags
+(`vMAJOR.MINOR.PATCH`); release notes are generated automatically.
 
 ## 🚀 Build & Run
 
