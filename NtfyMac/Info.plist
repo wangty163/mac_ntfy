@@ -24,6 +24,17 @@
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<!--
+		  Self-hosted ntfy servers are commonly reached over plain HTTP, on a
+		  LAN IP, or with a self-signed certificate (often via an /etc/hosts
+		  entry). Allow those connections so the user's local configuration is
+		  honored.
+		-->
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 	<key>NSHumanReadableCopyright</key>
 	<string>A native menu-bar client for ntfy.</string>
 	<key>NSPrincipalClass</key>

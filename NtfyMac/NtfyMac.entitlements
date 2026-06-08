@@ -2,9 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>com.apple.security.app-sandbox</key>
-	<true/>
-	<key>com.apple.security.network.client</key>
-	<true/>
+	<!--
+	  The App Sandbox is intentionally disabled. ntfy is frequently self-hosted
+	  on a LAN address or a hostname mapped via /etc/hosts, often over plain
+	  HTTP or with a self-signed certificate. Running unsandboxed (this app is
+	  distributed outside the Mac App Store) avoids restrictions that get in the
+	  way of reaching those servers. Network access is otherwise unrestricted.
+	-->
 </dict>
 </plist>
