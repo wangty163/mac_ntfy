@@ -44,7 +44,7 @@ struct SettingsView: View {
                 TextField("Default server", text: $settings.defaultServer)
                 Toggle("Launch at login", isOn: $settings.launchAtLogin)
                 Toggle("Show window at launch", isOn: $settings.openWindowAtLaunch)
-                Toggle("Show unread count in menu bar", isOn: $settings.showMenuBarCount)
+                Toggle("Show unread badge in menu bar", isOn: $settings.showMenuBarCount)
             }
             Section("History") {
                 Stepper("Keep \(settings.historyLimitPerTopic) messages per topic",
