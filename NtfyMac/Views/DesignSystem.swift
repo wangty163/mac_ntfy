@@ -121,25 +121,62 @@ struct StatusDot: View {
 /// A single timer drives every label, which is cheaper than one timer per row
 /// and—unlike `TimelineView(.periodic(from:by:))`, which can quietly stop
 /// firing on macOS when a window is occluded or App Nap kicks in—reliably keeps
-/// updating as long as the app's run loop is alive.
+/// updating as long as the app's run loop is alive. The timer temporarily moves
+/// to a 1s cadence only while visible labels are still in the "seconds ago"
+/// window, then returns to a cheaper 30s cadence.
 @MainActor
 final class RelativeClock: ObservableObject {
     static let shared = RelativeClock()
 
     @Published private(set) var now = Date()
 
+    private let freshMessageWindow: TimeInterval = 60
+    private let freshInterval: TimeInterval = 1
+    private let settledInterval: TimeInterval = 30
+
     private var timer: Timer?
+    private var timerInterval: TimeInterval?
+    private var activeDates: [UUID: Date] = [:]
 
     private init() {
-        // 30s cadence: fine enough that a "minute ago" label is never more than
-        // ~30s stale, while staying cheap.
-        let timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+        scheduleTimerIfNeeded()
+    }
+
+    func register(date: Date, id: UUID) {
+        activeDates[id] = date
+        scheduleTimerIfNeeded()
+    }
+
+    func unregister(id: UUID) {
+        activeDates[id] = nil
+        scheduleTimerIfNeeded()
+    }
+
+    private var desiredInterval: TimeInterval {
+        let hasFreshMessage = activeDates.values.contains { date in
+            now.timeIntervalSince(date) < freshMessageWindow
+        }
+        return hasFreshMessage ? freshInterval : settledInterval
+    }
+
+    private func scheduleTimerIfNeeded() {
+        let interval = desiredInterval
+        guard timerInterval != interval else { return }
+
+        timer?.invalidate()
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             guard let self else { return }
-            Task { @MainActor in self.now = Date() }
+            Task { @MainActor in self.tick() }
         }
         // Keep ticking while the user interacts with menus/scrolls.
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
+        timerInterval = interval
+    }
+
+    private func tick() {
+        now = Date()
+        scheduleTimerIfNeeded()
     }
 }
 
@@ -154,6 +191,7 @@ final class RelativeClock: ObservableObject {
 struct RelativeTimeText: View {
     let date: Date
     @ObservedObject private var clock = RelativeClock.shared
+    @State private var clockRegistrationID = UUID()
 
     private static let formatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
@@ -164,5 +202,10 @@ struct RelativeTimeText: View {
 
     var body: some View {
         Text(Self.formatter.localizedString(for: date, relativeTo: clock.now))
+            .onAppear { clock.register(date: date, id: clockRegistrationID) }
+            .onChange(of: date) { newDate in
+                clock.register(date: newDate, id: clockRegistrationID)
+            }
+            .onDisappear { clock.unregister(id: clockRegistrationID) }
     }
 }
