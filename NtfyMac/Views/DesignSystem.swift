@@ -131,9 +131,10 @@ final class RelativeClock: ObservableObject {
     private var timer: Timer?
 
     private init() {
-        // 30s cadence: fine enough that a "minute ago" label is never more than
-        // ~30s stale, while staying cheap.
-        let timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+        // 1s cadence: newly-arrived notifications render as "x seconds ago", so
+        // the list needs second-level refreshes while those messages are fresh.
+        // A single shared timer keeps this inexpensive even with many rows.
+        let timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in self.now = Date() }
         }
