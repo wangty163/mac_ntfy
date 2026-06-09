@@ -12,39 +12,36 @@ struct MenuPanelView: View {
     @EnvironmentObject var manager: SubscriptionManager
     @Environment(\.openWindow) private var openWindow
 
-    private var recent: [StoredMessage] {
-        Array(manager.recentMessages.prefix(12))
+    private var recentUnread: [StoredMessage] {
+        Array(manager.recentMessages.filter { !$0.isRead }.prefix(3))
     }
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            if recent.isEmpty {
-                emptyState
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 6) {
-                        ForEach(recent) { item in
-                            MenuMessageRow(stored: item,
-                                           subscription: manager.subscription(id: item.subscriptionID))
-                                .onTapGesture {
-                                    manager.markRead(subscriptionID: item.subscriptionID, messageID: item.message.id)
-                                    manager.pendingReveal = (item.subscriptionID, item.message.id)
-                                    openMain()
-                                }
-                        }
-                    }
-                    .padding(10)
-                }
-                .frame(maxHeight: 360)
-            }
+            content
+                .id(contentIdentity)
             Divider()
             footer
         }
         .frame(width: 360)
+        .fixedSize(horizontal: false, vertical: true)
         // Update instantly when content changes — no sliding/fly-in animations.
         .transaction { $0.animation = nil }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if recentUnread.isEmpty {
+            emptyState
+        } else {
+            unreadSection
+        }
+    }
+
+    private var contentIdentity: String {
+        recentUnread.isEmpty ? "empty" : recentUnread.map(\.id).joined(separator: "|")
     }
 
     private var header: some View {
@@ -79,15 +76,52 @@ struct MenuPanelView: View {
         return "\(connected)/\(total) topics connected"
     }
 
+    private var unreadSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Recent Unread")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("Latest 3")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 10)
+
+            VStack(spacing: 6) {
+                ForEach(recentUnread) { item in
+                    MenuMessageRow(
+                        stored: item,
+                        subscription: manager.subscription(id: item.subscriptionID),
+                        markRead: {
+                            manager.markRead(subscriptionID: item.subscriptionID, messageID: item.message.id)
+                        }
+                    )
+                    .onTapGesture {
+                        manager.markRead(subscriptionID: item.subscriptionID, messageID: item.message.id)
+                        manager.pendingReveal = (item.subscriptionID, item.message.id)
+                        openMain()
+                    }
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.bottom, 10)
+        }
+    }
+
     private var emptyState: some View {
         VStack(spacing: 10) {
-            Image(systemName: "tray").font(.system(size: 30)).foregroundStyle(.secondary)
-            Text("No notifications yet").font(.subheadline).foregroundStyle(.secondary)
-            Button("Add a subscription") { openMain() }
-                .buttonStyle(.borderedProminent)
+            Image(systemName: "tray")
+                .font(.system(size: 30))
+                .foregroundStyle(.secondary)
+            Text(manager.messages.isEmpty ? "No notifications yet" : "No unread notifications")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 30)
+        .padding(.vertical, 22)
     }
 
     private var footer: some View {
@@ -163,22 +197,51 @@ private struct ModernSettingsButton: View {
 struct MenuMessageRow: View {
     let stored: StoredMessage
     let subscription: Subscription?
+    var markRead: () -> Void
+
+    private var accent: Color { subscription?.accentColor ?? .accentColor }
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             Circle()
-                .fill(stored.isRead ? Color.clear : (subscription?.accentColor ?? .accentColor))
+                .fill(accent)
                 .frame(width: 7, height: 7)
                 .padding(.top, 5)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack {
-                    Text(title).font(.subheadline.weight(.semibold)).lineLimit(1)
-                    Spacer()
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
                     RelativeTimeText(date: stored.message.date)
-                        .font(.caption2).foregroundStyle(.secondary).fixedSize()
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
                 }
+
                 if let body = stored.message.message, !body.isEmpty {
-                    Text(body).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    Text(body)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+
+                HStack(spacing: 6) {
+                    Label(channelName, systemImage: "number")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Button {
+                        markRead()
+                    } label: {
+                        Label("Mark Read", systemImage: "checkmark.circle")
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .font(.caption2.weight(.medium))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(accent)
+                    .help("Mark this notification as read")
                 }
             }
         }
@@ -188,9 +251,12 @@ struct MenuMessageRow: View {
     }
 
     private var title: String {
-        let name = subscription?.name ?? stored.message.topic
         let prefix = stored.message.emojiTags.joined()
-        let base = stored.message.displayTitle(fallbackTopic: name)
+        let base = stored.message.displayTitle(fallbackTopic: channelName)
         return prefix.isEmpty ? base : "\(prefix) \(base)"
+    }
+
+    private var channelName: String {
+        subscription?.name ?? stored.message.topic
     }
 }
