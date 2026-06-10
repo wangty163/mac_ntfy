@@ -32,7 +32,7 @@ struct MessageRowView: View {
                         .fontWeight(stored.isRead ? .semibold : .bold)
                         .lineLimit(1)
                     Spacer(minLength: 4)
-                    Text(message.date, format: .relative(presentation: .numeric))
+                    RelativeTimeText(date: message.date)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .fixedSize()
