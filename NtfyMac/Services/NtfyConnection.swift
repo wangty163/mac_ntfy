@@ -22,25 +22,29 @@ final class NtfyConnection {
     var onStateChange: ((ConnectionState) -> Void)?
 
     private var task: Task<Void, Never>?
-    private let session: URLSession
 
     init(subscription: Subscription) {
         self.subscriptionID = subscription.id
         self.subscription = subscription
+    }
 
-        let config = URLSessionConfiguration.default
-        // ntfy sends a keepalive roughly every 45s; if nothing arrives for far
-        // longer than that the connection is dead (silent TCP drop after sleep
-        // or a NAT timeout) and this idle timeout kicks off a reconnect.
-        config.timeoutIntervalForRequest = 120
+    /// A fresh session per connection attempt. Reusing one session across
+    /// reconnects can hand us a half-dead pooled connection after a network
+    /// change, which then stalls until it times out.
+    private static func makeSession() -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        // ntfy sends a keepalive roughly every 45s; if we miss two in a row the
+        // connection is dead — fail the request so the loop reconnects, instead
+        // of stalling for minutes on a silently broken socket.
+        config.timeoutIntervalForRequest = 100
         config.timeoutIntervalForResource = .infinity
-        // Fail fast instead of waiting for connectivity: URLSession's
-        // connectivity assessment can be stale after sleep/wake or a network
-        // switch, which would leave the request hanging forever even though
-        // the server is reachable. Our own retry loop handles reconnecting.
+        // Never let URLSession park the request waiting for connectivity: its
+        // connectivity assessment can be wrong (VPN/Wi-Fi transitions), leaving
+        // us stuck in "Connecting…" forever while the network actually works.
+        // Our own retry loop handles waiting and backoff.
         config.waitsForConnectivity = false
         config.httpAdditionalHeaders = ["User-Agent": "NtfyMac/1.0"]
-        self.session = URLSession(configuration: config)
+        return URLSession(configuration: config)
     }
 
     func updateSubscription(_ sub: Subscription) {
@@ -91,10 +95,10 @@ final class NtfyConnection {
                 setState(.disconnected(reason: error.localizedDescription))
                 return
             } catch {
-                // A connection that was established and later dropped should
-                // retry promptly; only escalate the backoff for attempts that
-                // never got through.
-                if state.isConnected { backoff = 1 }
+                // Cancellation can surface as URLError(.cancelled) from
+                // URLSession rather than CancellationError; don't let a stale
+                // task overwrite the state a restarted connection just set.
+                if Task.isCancelled { break }
                 setState(.disconnected(reason: error.localizedDescription))
             }
 
@@ -106,9 +110,9 @@ final class NtfyConnection {
             try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
             backoff = min(backoff * 2, maxBackoff)
         }
-        // No trailing state reset here: the loop only exits via cancellation,
-        // where `stop()` has already set `.idle`. Setting it from this (stale)
-        // task could clobber the state of a connection started by `restart()`.
+        // No trailing setState(.idle): the loop only exits on cancellation, and
+        // stop() already set .idle. Setting it here would race with a restarted
+        // connection that has since moved to .connecting.
     }
 
     private func streamOnce() async throws {
@@ -116,10 +120,13 @@ final class NtfyConnection {
             throw URLError(.badURL)
         }
         var request = URLRequest(url: url)
-        request.timeoutInterval = 120
+        request.timeoutInterval = 100
         if let auth = subscription.auth.authorizationHeader {
             request.setValue(auth, forHTTPHeaderField: "Authorization")
         }
+
+        let session = Self.makeSession()
+        defer { session.invalidateAndCancel() }
 
         let (bytes, response) = try await session.bytes(for: request)
 
