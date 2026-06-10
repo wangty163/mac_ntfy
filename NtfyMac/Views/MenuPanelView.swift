@@ -16,35 +16,44 @@ struct MenuPanelView: View {
         Array(manager.recentMessages.prefix(12))
     }
 
+    /// Fixed height of the message area so the panel never resizes,
+    /// whether it shows messages or the empty state.
+    private static let messageAreaHeight: CGFloat = 360
+
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            if recent.isEmpty {
-                emptyState
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 6) {
-                        ForEach(recent) { item in
-                            MenuMessageRow(stored: item,
-                                           subscription: manager.subscription(id: item.subscriptionID))
-                                .onTapGesture {
-                                    manager.markRead(subscriptionID: item.subscriptionID, messageID: item.message.id)
-                                    manager.pendingReveal = (item.subscriptionID, item.message.id)
-                                    openMain()
-                                }
-                        }
-                    }
-                    .padding(10)
-                }
-                .frame(maxHeight: 360)
-            }
+            messageArea
+                .frame(height: Self.messageAreaHeight)
             Divider()
             footer
         }
         .frame(width: 360)
         // Update instantly when content changes — no sliding/fly-in animations.
         .transaction { $0.animation = nil }
+    }
+
+    @ViewBuilder
+    private var messageArea: some View {
+        if recent.isEmpty {
+            emptyState
+        } else {
+            ScrollView {
+                LazyVStack(spacing: 6) {
+                    ForEach(recent) { item in
+                        MenuMessageRow(stored: item,
+                                       subscription: manager.subscription(id: item.subscriptionID))
+                            .onTapGesture {
+                                manager.markRead(subscriptionID: item.subscriptionID, messageID: item.message.id)
+                                manager.pendingReveal = (item.subscriptionID, item.message.id)
+                                openMain()
+                            }
+                    }
+                }
+                .padding(10)
+            }
+        }
     }
 
     private var header: some View {
@@ -86,8 +95,7 @@ struct MenuPanelView: View {
             Button("Add a subscription") { openMain() }
                 .buttonStyle(.borderedProminent)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 30)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var footer: some View {
