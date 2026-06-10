@@ -13,14 +13,14 @@ struct MenuPanelView: View {
     @Environment(\.openWindow) private var openWindow
     @State private var panelContentHeight: CGFloat = 0
 
-    private var recentUnread: [StoredMessage] {
-        Array(manager.recentMessages.filter { !$0.isRead }.prefix(3))
+    private var unreadMessages: [StoredMessage] {
+        manager.recentMessages.filter { !$0.isRead }
     }
 
-    /// Fixed message area height so the menu-bar panel keeps a stable size as
-    /// unread messages are marked read one by one. This is sized for the
-    /// heading plus up to three compact message rows.
-    private static let messageAreaHeight: CGFloat = 320
+    /// Fixed message area height so the menu-bar panel keeps the original
+    /// compact size. Extra unread messages are shown by scrolling instead of
+    /// growing the popover.
+    private static let messageAreaHeight: CGFloat = 140
 
     var body: some View {
         VStack(spacing: 0) {
@@ -47,13 +47,12 @@ struct MenuPanelView: View {
         .transaction { $0.animation = nil }
     }
 
-    /// Fixed-height content area: at most the three rows of `recentUnread`, with
-    /// empty space kept intentionally so the popover does not jump shorter after
-    /// the last unread item is marked read.
+    /// Fixed-height content area. Unread rows scroll inside this space so the
+    /// menu-bar popover height never changes as messages arrive or are read.
     @ViewBuilder
     private var messageArea: some View {
         Group {
-            if recentUnread.isEmpty {
+            if unreadMessages.isEmpty {
                 emptyState
             } else {
                 unreadSection
@@ -98,35 +97,37 @@ struct MenuPanelView: View {
     private var unreadSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Recent Unread")
+                Text("Unread")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text("Latest 3")
+                Text("\(unreadMessages.count) total")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 10)
             .padding(.top, 10)
 
-            VStack(spacing: 6) {
-                ForEach(recentUnread) { item in
-                    MenuMessageRow(
-                        stored: item,
-                        subscription: manager.subscription(id: item.subscriptionID),
-                        markRead: {
+            ScrollView {
+                LazyVStack(spacing: 6) {
+                    ForEach(unreadMessages) { item in
+                        MenuMessageRow(
+                            stored: item,
+                            subscription: manager.subscription(id: item.subscriptionID),
+                            markRead: {
+                                manager.markRead(subscriptionID: item.subscriptionID, messageID: item.message.id)
+                            }
+                        )
+                        .onTapGesture {
                             manager.markRead(subscriptionID: item.subscriptionID, messageID: item.message.id)
+                            manager.pendingReveal = (item.subscriptionID, item.message.id)
+                            openMain()
                         }
-                    )
-                    .onTapGesture {
-                        manager.markRead(subscriptionID: item.subscriptionID, messageID: item.message.id)
-                        manager.pendingReveal = (item.subscriptionID, item.message.id)
-                        openMain()
                     }
                 }
+                .padding(.horizontal, 10)
+                .padding(.bottom, 10)
             }
-            .padding(.horizontal, 10)
-            .padding(.bottom, 10)
         }
     }
 
