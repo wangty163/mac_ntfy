@@ -29,11 +29,16 @@ final class NtfyConnection {
         self.subscription = subscription
 
         let config = URLSessionConfiguration.default
-        // Streaming connections must not time out while idle; ntfy sends a
-        // keepalive roughly every 45s, but we allow generous slack.
-        config.timeoutIntervalForRequest = 360
+        // ntfy sends a keepalive roughly every 45s; if nothing arrives for far
+        // longer than that the connection is dead (silent TCP drop after sleep
+        // or a NAT timeout) and this idle timeout kicks off a reconnect.
+        config.timeoutIntervalForRequest = 120
         config.timeoutIntervalForResource = .infinity
-        config.waitsForConnectivity = true
+        // Fail fast instead of waiting for connectivity: URLSession's
+        // connectivity assessment can be stale after sleep/wake or a network
+        // switch, which would leave the request hanging forever even though
+        // the server is reachable. Our own retry loop handles reconnecting.
+        config.waitsForConnectivity = false
         config.httpAdditionalHeaders = ["User-Agent": "NtfyMac/1.0"]
         self.session = URLSession(configuration: config)
     }
@@ -86,6 +91,10 @@ final class NtfyConnection {
                 setState(.disconnected(reason: error.localizedDescription))
                 return
             } catch {
+                // A connection that was established and later dropped should
+                // retry promptly; only escalate the backoff for attempts that
+                // never got through.
+                if state.isConnected { backoff = 1 }
                 setState(.disconnected(reason: error.localizedDescription))
             }
 
@@ -97,7 +106,9 @@ final class NtfyConnection {
             try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
             backoff = min(backoff * 2, maxBackoff)
         }
-        setState(.idle)
+        // No trailing state reset here: the loop only exits via cancellation,
+        // where `stop()` has already set `.idle`. Setting it from this (stale)
+        // task could clobber the state of a connection started by `restart()`.
     }
 
     private func streamOnce() async throws {
@@ -105,7 +116,7 @@ final class NtfyConnection {
             throw URLError(.badURL)
         }
         var request = URLRequest(url: url)
-        request.timeoutInterval = 360
+        request.timeoutInterval = 120
         if let auth = subscription.auth.authorizationHeader {
             request.setValue(auth, forHTTPHeaderField: "Authorization")
         }

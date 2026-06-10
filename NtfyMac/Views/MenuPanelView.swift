@@ -16,34 +16,34 @@ struct MenuPanelView: View {
         Array(manager.recentMessages.filter { !$0.isRead }.prefix(3))
     }
 
-    /// Fixed height of the message area so the panel never resizes,
-    /// whether it shows messages or the empty state.
-    private static let messageAreaHeight: CGFloat = 360
+    /// Compact fixed height for the empty state so the panel keeps a sensible
+    /// shape when there is nothing to show.
+    private static let emptyStateHeight: CGFloat = 140
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
             messageArea
-                .frame(height: Self.messageAreaHeight)
             Divider()
             footer
         }
         .frame(width: 360)
         .fixedSize(horizontal: false, vertical: true)
-        .background(MenuPanelWindowResizer(sizeKey: recentUnread.count))
+        .background(MenuPanelWindowResizer(sizeKey: recentUnread.map(\.id).hashValue))
         // Update instantly when content changes — no sliding/fly-in animations.
         .transaction { $0.animation = nil }
     }
 
+    /// Sized by its content: at most the three rows of `recentUnread`, so the
+    /// panel never grows taller than three messages.
     @ViewBuilder
     private var messageArea: some View {
         if recentUnread.isEmpty {
             emptyState
+                .frame(height: Self.emptyStateHeight)
         } else {
-            ScrollView {
-                unreadSection
-            }
+            unreadSection
         }
     }
 
@@ -93,7 +93,7 @@ struct MenuPanelView: View {
             .padding(.horizontal, 10)
             .padding(.top, 10)
 
-            LazyVStack(spacing: 6) {
+            VStack(spacing: 6) {
                 ForEach(recentUnread) { item in
                     MenuMessageRow(
                         stored: item,
