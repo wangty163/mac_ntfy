@@ -35,8 +35,13 @@ jobs:
           else
             VERSION="${{ github.event.inputs.tag }}"
           fi
+          MARKETING_VERSION="${VERSION#v}"
+          if ! [[ "$MARKETING_VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+            MARKETING_VERSION="0.0.${GITHUB_RUN_NUMBER}"
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Building version: $VERSION"
+          echo "marketing_version=$MARKETING_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building version: $VERSION (CFBundleShortVersionString=$MARKETING_VERSION)"
 
       - name: Build Release (unsigned)
         run: |
@@ -50,6 +55,9 @@ jobs:
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
+            MARKETING_VERSION="${{ steps.version.outputs.marketing_version }}" \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            NTFY_BUILD_VERSION_LABEL="${{ steps.version.outputs.version }}" \
             clean build
 
       - name: Stage app bundle

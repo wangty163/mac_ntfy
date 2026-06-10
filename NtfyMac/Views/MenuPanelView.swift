@@ -11,6 +11,7 @@ import SwiftUI
 struct MenuPanelView: View {
     @EnvironmentObject var manager: SubscriptionManager
     @Environment(\.openWindow) private var openWindow
+    @State private var panelContentHeight: CGFloat = 0
 
     private var recentUnread: [StoredMessage] {
         Array(manager.recentMessages.filter { !$0.isRead }.prefix(3))
@@ -30,7 +31,17 @@ struct MenuPanelView: View {
         }
         .frame(width: 360)
         .fixedSize(horizontal: false, vertical: true)
-        .background(MenuPanelWindowResizer(sizeKey: recentUnread.map(\.id).hashValue))
+        .background {
+            GeometryReader { proxy in
+                Color.clear
+                    .preference(
+                        key: MenuPanelHeightKey.self,
+                        value: proxy.size.height
+                    )
+            }
+        }
+        .onPreferenceChange(MenuPanelHeightKey.self) { panelContentHeight = $0 }
+        .background(MenuPanelWindowResizer(targetHeight: panelContentHeight))
         // Update instantly when content changes — no sliding/fly-in animations.
         .transaction { $0.animation = nil }
     }
@@ -184,11 +195,20 @@ struct MenuPanelView: View {
     }
 }
 
-/// Keeps the menu-bar extra window fitted to the SwiftUI content as unread
-/// rows are removed. `MenuBarExtra` windows can keep their previous taller
-/// frame after content shrinks, which leaves a blank area above the footer.
+private struct MenuPanelHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+/// Keeps the menu-bar extra window fitted to the measured SwiftUI content as
+/// unread rows are removed. `MenuBarExtra` windows can keep their previous
+/// taller frame after content shrinks, which leaves translucent blank areas
+/// around the now-smaller content.
 private struct MenuPanelWindowResizer: NSViewRepresentable {
-    let sizeKey: Int
+    let targetHeight: CGFloat
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView(frame: .zero)
@@ -198,19 +218,17 @@ private struct MenuPanelWindowResizer: NSViewRepresentable {
 
     func updateNSView(_ view: NSView, context: Context) {
         DispatchQueue.main.async {
-            guard let window = view.window, let contentView = window.contentView else { return }
-            let fittingSize = contentView.fittingSize
-            guard fittingSize.width > 0, fittingSize.height > 0 else { return }
+            guard targetHeight > 0, let window = view.window else { return }
 
             let currentFrame = window.frame
-            let targetHeight = fittingSize.height
-            guard abs(currentFrame.height - targetHeight) > 0.5 else { return }
+            let roundedHeight = ceil(targetHeight)
+            guard abs(currentFrame.height - roundedHeight) > 0.5 else { return }
 
             let targetFrame = NSRect(
                 x: currentFrame.minX,
-                y: currentFrame.maxY - targetHeight,
+                y: currentFrame.maxY - roundedHeight,
                 width: currentFrame.width,
-                height: targetHeight
+                height: roundedHeight
             )
             window.setFrame(targetFrame, display: true, animate: false)
         }

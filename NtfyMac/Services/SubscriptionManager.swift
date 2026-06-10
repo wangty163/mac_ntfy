@@ -150,6 +150,9 @@ final class SubscriptionManager: ObservableObject {
         connection.onStateChange = { [weak self] state in
             self?.states[sub.id] = state
         }
+        connection.onCursorInvalidated = { [weak self] in
+            self?.clearCursor(for: sub.id)
+        }
         connection.onMessage = { [weak self] message in
             self?.ingest(message, for: sub.id)
         }
@@ -195,6 +198,14 @@ final class SubscriptionManager: ObservableObject {
     private func updateCursor(_ messageID: String, for index: Int) {
         subscriptions[index].lastMessageID = messageID
         connections[subscriptions[index].id]?.updateSubscription(subscriptions[index])
+        persistSubscriptions()
+    }
+
+    private func clearCursor(for subscriptionID: UUID) {
+        guard let idx = subscriptions.firstIndex(where: { $0.id == subscriptionID }) else { return }
+        guard subscriptions[idx].lastMessageID != nil else { return }
+        subscriptions[idx].lastMessageID = nil
+        connections[subscriptionID]?.updateSubscription(subscriptions[idx])
         persistSubscriptions()
     }
 
