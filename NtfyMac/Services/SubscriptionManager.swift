@@ -25,6 +25,11 @@ final class SubscriptionManager: ObservableObject {
     private let pathMonitor = NWPathMonitor()
     private let monitorQueue = DispatchQueue(label: "com.ntfymac.network-monitor")
     private var hasNetwork = true
+    /// Which interfaces the current path uses (e.g. ["en0"]). Switching Wi-Fi
+    /// networks or hopping between Wi-Fi/Ethernet/VPN keeps the path
+    /// "satisfied" but silently kills established streams, so we track the
+    /// interface set and reconnect when it changes.
+    private var pathInterfaces: Set<String>?
 
     init(settings: AppSettings) {
         self.settings = settings
@@ -238,11 +243,15 @@ final class SubscriptionManager: ObservableObject {
     private func startMonitoring() {
         pathMonitor.pathUpdateHandler = { [weak self] path in
             let online = path.status == .satisfied
+            let interfaces = Set(path.availableInterfaces.map(\.name))
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 let wasOffline = !self.hasNetwork
+                let interfacesChanged = self.pathInterfaces != nil
+                    && self.pathInterfaces != interfaces
                 self.hasNetwork = online
-                if online && wasOffline {
+                self.pathInterfaces = interfaces
+                if online && (wasOffline || interfacesChanged) {
                     self.reconnectAll()
                 }
             }
