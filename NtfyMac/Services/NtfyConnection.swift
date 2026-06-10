@@ -20,6 +20,9 @@ final class NtfyConnection {
     var onMessage: ((NtfyMessage) -> Void)?
     /// Called whenever the connection state changes (for UI badges).
     var onStateChange: ((ConnectionState) -> Void)?
+    /// Called when the server rejects the persisted `since` cursor, usually
+    /// because the message ID has fallen out of the server-side cache.
+    var onCursorInvalidated: (() -> Void)?
 
     private var task: Task<Void, Never>?
 
@@ -88,6 +91,14 @@ final class NtfyConnection {
                 backoff = 1
             } catch is CancellationError {
                 break
+            } catch let error as NtfyError where error.isStaleCursor {
+                // ntfy only caches messages for a limited time. If our saved
+                // message ID is too old, the server can reject `since=<id>`.
+                // Drop the cursor and retry immediately so the app can connect
+                // instead of showing Offline forever while the server is fine.
+                onCursorInvalidated?()
+                backoff = 1
+                continue
             } catch let error as NtfyError where error.isAuthFailure {
                 // Bad credentials won't fix themselves by retrying; stop and
                 // leave the error visible until the user edits the subscription
@@ -119,8 +130,24 @@ final class NtfyConnection {
         guard let url = subscription.streamURL() else {
             throw URLError(.badURL)
         }
+
+        do {
+            try await stream(url: url)
+        } catch {
+            guard LocalHostsResolver.shouldRetryWithHostsMapping(for: url, error: error) else {
+                throw error
+            }
+            let mappedURL = LocalHostsResolver.mappedURL(for: url)
+            try await stream(url: mappedURL.url, hostHeader: mappedURL.hostHeader)
+        }
+    }
+
+    private func stream(url: URL, hostHeader: String? = nil) async throws {
         var request = URLRequest(url: url)
         request.timeoutInterval = 100
+        if let hostHeader {
+            request.setValue(hostHeader, forHTTPHeaderField: "Host")
+        }
         if let auth = subscription.auth.authorizationHeader {
             request.setValue(auth, forHTTPHeaderField: "Authorization")
         }
@@ -132,6 +159,8 @@ final class NtfyConnection {
 
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             switch http.statusCode {
+            case 400 where subscription.lastMessageID != nil:
+                throw NtfyError.staleCursor
             case 401, 403:
                 throw NtfyError.unauthorized("Authentication failed (\(http.statusCode))")
             case 404:
@@ -177,11 +206,14 @@ final class NtfyConnection {
 enum NtfyError: LocalizedError {
     case http(String)
     case unauthorized(String)
+    case staleCursor
 
     var errorDescription: String? {
         switch self {
         case let .http(reason): return reason
         case let .unauthorized(reason): return reason
+        case .staleCursor:
+            return "Saved sync cursor is no longer available on the server"
         }
     }
 
@@ -189,5 +221,97 @@ enum NtfyError: LocalizedError {
     var isAuthFailure: Bool {
         if case .unauthorized = self { return true }
         return false
+    }
+
+    /// A stale cursor is recoverable by clearing the saved last message ID.
+    var isStaleCursor: Bool {
+        if case .staleCursor = self { return true }
+        return false
+    }
+}
+
+/// Resolves hostnames explicitly from `/etc/hosts` and rewrites requests to the
+/// mapped address while keeping the original HTTP Host header. URLSession
+/// usually uses the system resolver, but some self-hosted ntfy setups are only
+/// reachable through local hosts overrides and can otherwise fail with
+/// `NSURLErrorNetworkConnectionLost` even though a browser can open the URL.
+enum LocalHostsResolver {
+    struct MappedURL {
+        var url: URL
+        var hostHeader: String?
+    }
+
+    static func shouldRetryWithHostsMapping(for url: URL, error: Error) -> Bool {
+        guard let urlError = error as? URLError else { return false }
+        switch urlError.code {
+        case .networkConnectionLost, .cannotFindHost, .cannotConnectToHost, .timedOut, .dnsLookupFailed:
+            return mappedURL(for: url).hostHeader != nil
+        default:
+            return false
+        }
+    }
+
+    static func mappedURL(for url: URL) -> MappedURL {
+        guard let host = url.host,
+              !isIPAddress(host),
+              let address = hostsAddress(for: host),
+              var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else {
+            return MappedURL(url: url, hostHeader: nil)
+        }
+
+        components.host = address
+        guard let resolvedURL = components.url else {
+            return MappedURL(url: url, hostHeader: nil)
+        }
+
+        return MappedURL(
+            url: resolvedURL,
+            hostHeader: hostHeader(for: url, originalHost: host)
+        )
+    }
+
+    private static func hostsAddress(for host: String) -> String? {
+        guard let contents = try? String(contentsOfFile: "/etc/hosts", encoding: .utf8) else {
+            return nil
+        }
+        let wanted = host.lowercased()
+
+        for rawLine in contents.components(separatedBy: .newlines) {
+            let line = rawLine.split(separator: "#", maxSplits: 1).first.map(String.init) ?? ""
+            let fields = line.split { $0 == " " || $0 == "\t" }.map(String.init)
+            guard fields.count >= 2 else { continue }
+
+            let address = fields[0]
+            for alias in fields.dropFirst() where alias.lowercased() == wanted {
+                return address
+            }
+        }
+        return nil
+    }
+
+    private static func hostHeader(for url: URL, originalHost: String) -> String {
+        guard let port = url.port, !isDefaultPort(port, scheme: url.scheme) else {
+            return originalHost
+        }
+        return "\(originalHost):\(port)"
+    }
+
+    private static func isDefaultPort(_ port: Int, scheme: String?) -> Bool {
+        (scheme?.lowercased() == "http" && port == 80)
+            || (scheme?.lowercased() == "https" && port == 443)
+    }
+
+    private static func isIPAddress(_ host: String) -> Bool {
+        isIPv4Address(host) || host.contains(":")
+    }
+
+    private static func isIPv4Address(_ host: String) -> Bool {
+        let parts = host.split(separator: ".")
+        guard parts.count == 4 else { return false }
+        return parts.allSatisfy { part in
+            guard let value = Int(part), value >= 0, value <= 255 else { return false }
+            return String(value) == part || part == "0"
+        }
     }
 }
