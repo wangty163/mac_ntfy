@@ -175,18 +175,14 @@ struct MenuPanelView: View {
         .padding(12)
     }
 
-    /// Opens Settings reliably: the official `openSettings` action on macOS 14+,
-    /// falling back to the responder-chain selector on macOS 13.
-    @ViewBuilder
+    /// Opens Settings through AppKit's standard Settings/Preferences selectors,
+    /// then explicitly raises the resulting window. This avoids relying on
+    /// `openSettings`, which is not available in the Xcode 15.4 SDK used by CI.
     private var settingsButton: some View {
-        if #available(macOS 14.0, *) {
-            ModernSettingsButton()
-        } else {
-            Button {
-                SettingsWindow.showUsingResponderChain()
-            } label: {
-                Image(systemName: "gearshape")
-            }
+        Button {
+            SettingsWindow.showUsingResponderChain()
+        } label: {
+            Image(systemName: "gearshape")
         }
     }
 
@@ -234,24 +230,6 @@ private struct MenuPanelWindowResizer: NSViewRepresentable {
                 height: roundedHeight
             )
             window.setFrame(targetFrame, display: true, animate: false)
-        }
-    }
-}
-
-/// Settings button for macOS 14+, using the official `openSettings` action and
-/// then explicitly raising the settings window. A plain `SettingsLink` can open
-/// behind the menu-bar panel because the app normally runs as an accessory app.
-@available(macOS 14.0, *)
-private struct ModernSettingsButton: View {
-    @Environment(\.openSettings) private var openSettings
-
-    var body: some View {
-        Button {
-            AppActivation.enterWindowMode()
-            openSettings()
-            SettingsWindow.focusSoon()
-        } label: {
-            Image(systemName: "gearshape")
         }
     }
 }
