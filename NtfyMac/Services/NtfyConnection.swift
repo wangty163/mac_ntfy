@@ -20,6 +20,9 @@ final class NtfyConnection {
     var onMessage: ((NtfyMessage) -> Void)?
     /// Called whenever the connection state changes (for UI badges).
     var onStateChange: ((ConnectionState) -> Void)?
+    /// Called when the server rejects the persisted `since` cursor, usually
+    /// because the message ID has fallen out of the server-side cache.
+    var onCursorInvalidated: (() -> Void)?
 
     private var task: Task<Void, Never>?
 
@@ -88,6 +91,14 @@ final class NtfyConnection {
                 backoff = 1
             } catch is CancellationError {
                 break
+            } catch let error as NtfyError where error.isStaleCursor {
+                // ntfy only caches messages for a limited time. If our saved
+                // message ID is too old, the server can reject `since=<id>`.
+                // Drop the cursor and retry immediately so the app can connect
+                // instead of showing Offline forever while the server is fine.
+                onCursorInvalidated?()
+                backoff = 1
+                continue
             } catch let error as NtfyError where error.isAuthFailure {
                 // Bad credentials won't fix themselves by retrying; stop and
                 // leave the error visible until the user edits the subscription
@@ -132,6 +143,8 @@ final class NtfyConnection {
 
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             switch http.statusCode {
+            case 400 where subscription.lastMessageID != nil:
+                throw NtfyError.staleCursor
             case 401, 403:
                 throw NtfyError.unauthorized("Authentication failed (\(http.statusCode))")
             case 404:
@@ -177,17 +190,26 @@ final class NtfyConnection {
 enum NtfyError: LocalizedError {
     case http(String)
     case unauthorized(String)
+    case staleCursor
 
     var errorDescription: String? {
         switch self {
         case let .http(reason): return reason
         case let .unauthorized(reason): return reason
+        case .staleCursor:
+            return "Saved sync cursor is no longer available on the server"
         }
     }
 
     /// Authentication/permission failures that won't be fixed by reconnecting.
     var isAuthFailure: Bool {
         if case .unauthorized = self { return true }
+        return false
+    }
+
+    /// A stale cursor is recoverable by clearing the saved last message ID.
+    var isStaleCursor: Bool {
+        if case .staleCursor = self { return true }
         return false
     }
 }

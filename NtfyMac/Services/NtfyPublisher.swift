@@ -62,11 +62,9 @@ enum NtfyPublisher {
 
     /// Quick `poll=1` request that verifies the server + topic + auth work.
     static func test(subscription: Subscription) async -> Result<Void, Error> {
-        guard var components = URLComponents(string: "\(subscription.normalizedBaseURL)/\(subscription.topic)/json") else {
+        guard let url = subscription.streamURL(forcePoll: true, includeCursor: false) else {
             return .failure(URLError(.badURL))
         }
-        components.queryItems = [URLQueryItem(name: "poll", value: "1")]
-        guard let url = components.url else { return .failure(URLError(.badURL)) }
 
         var request = URLRequest(url: url)
         request.timeoutInterval = 15

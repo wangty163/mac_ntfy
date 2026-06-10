@@ -88,13 +88,13 @@ struct Subscription: Identifiable, Codable, Equatable, Hashable {
         Color(hex: accentHex) ?? .accentColor
     }
 
-    /// Builds the streaming request URL with `since` + filters applied.
-    func streamURL(forcePoll: Bool = false) -> URL? {
+    /// Builds the JSON subscription URL with cursor + filters applied.
+    func streamURL(forcePoll: Bool = false, includeCursor: Bool = true) -> URL? {
         guard var components = URLComponents(string: "\(normalizedBaseURL)/\(topic)/json") else {
             return nil
         }
         var items: [URLQueryItem] = []
-        if let lastMessageID {
+        if includeCursor, let lastMessageID {
             items.append(URLQueryItem(name: "since", value: lastMessageID))
         }
         if forcePoll {
@@ -107,8 +107,12 @@ struct Subscription: Identifiable, Codable, Equatable, Hashable {
         if !filters.tags.isEmpty {
             items.append(URLQueryItem(name: "tags", value: filters.tags.joined(separator: ",")))
         }
-        // ntfy also serves scheduled/delayed messages when asked.
-        items.append(URLQueryItem(name: "sched", value: "1"))
+        // Scheduled/delayed messages are a finite catch-up query. Including
+        // them on the live stream is unnecessary once they are delivered, and
+        // some self-hosted/proxied setups handle that combination poorly.
+        if forcePoll {
+            items.append(URLQueryItem(name: "sched", value: "1"))
+        }
         if !items.isEmpty { components.queryItems = items }
         return components.url
     }
