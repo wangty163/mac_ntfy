@@ -110,6 +110,34 @@ messages can appear as banners.
 
    …or use the in-app **Publish** button (paper-plane icon).
 
+## 🛠 Troubleshooting notes
+
+### Browser opens the server, but the app says “The network connection was lost”
+
+Some self-hosted or reverse-proxied ntfy deployments are reachable only because
+the Mac has a custom `/etc/hosts` entry, for example mapping an internal ntfy
+hostname to a LAN IP. In that situation, Safari/Chrome may open the URL while a
+long-lived `URLSession` stream still reports `NSURLErrorNetworkConnectionLost`.
+
+Lessons learned from debugging this case:
+
+- Treat “browser works” as a hint, not proof that every HTTP client resolves and
+  routes the hostname the same way. Always check whether `/etc/hosts`, VPN,
+  proxy, or split-DNS rules are involved.
+- Preserve the original hostname when falling back to a hosts-mapped address.
+  The app retries failed ntfy requests against the IP from `/etc/hosts`, but
+  still sends the original `Host` header so virtual hosts and reverse proxies
+  can route the request correctly.
+- Apply the same fallback to all ntfy network paths: subscription streams, the
+  add/edit subscription **Test** button, and publishing. Otherwise one action can
+  appear fixed while another still fails.
+- Keep the configured server URL on the hostname, not the raw IP, especially for
+  HTTPS. Certificates and reverse-proxy routing typically expect the hostname
+  listed in `/etc/hosts`.
+- If the app stays offline after being closed for a long time, also consider a
+  stale `since` cursor. ntfy only caches messages for a limited time, so the app
+  clears a rejected saved cursor and reconnects without it.
+
 ## 🏗 Architecture
 
 ```
