@@ -139,11 +139,14 @@ final class NtfyConnection {
         guard let url = subscription.streamURL() else {
             throw URLError(.badURL)
         }
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 100
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 100
         if let auth = subscription.auth.authorizationHeader {
-            request.setValue(auth, forHTTPHeaderField: "Authorization")
+            req.setValue(auth, forHTTPHeaderField: "Authorization")
         }
+        // Frozen copy: the task group closure below is @Sendable and may not
+        // capture a mutable local.
+        let request = req
 
         let session = Self.makeSession()
         defer { session.invalidateAndCancel() }
