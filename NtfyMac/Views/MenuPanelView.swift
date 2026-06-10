@@ -11,14 +11,16 @@ import SwiftUI
 struct MenuPanelView: View {
     @EnvironmentObject var manager: SubscriptionManager
     @Environment(\.openWindow) private var openWindow
+    @State private var panelContentHeight: CGFloat = 0
 
-    private var recentUnread: [StoredMessage] {
-        Array(manager.recentMessages.filter { !$0.isRead }.prefix(3))
+    private var unreadMessages: [StoredMessage] {
+        manager.recentMessages.filter { !$0.isRead }
     }
 
-    /// Compact fixed height for the empty state so the panel keeps a sensible
-    /// shape when there is nothing to show.
-    private static let emptyStateHeight: CGFloat = 140
+    /// Fixed message area height so the menu-bar panel keeps the original
+    /// compact size. Extra unread messages are shown by scrolling instead of
+    /// growing the popover.
+    private static let messageAreaHeight: CGFloat = 140
 
     var body: some View {
         VStack(spacing: 0) {
@@ -30,21 +32,34 @@ struct MenuPanelView: View {
         }
         .frame(width: 360)
         .fixedSize(horizontal: false, vertical: true)
-        .background(MenuPanelWindowResizer(sizeKey: recentUnread.map(\.id).hashValue))
+        .background {
+            GeometryReader { proxy in
+                Color.clear
+                    .preference(
+                        key: MenuPanelHeightKey.self,
+                        value: proxy.size.height
+                    )
+            }
+        }
+        .onPreferenceChange(MenuPanelHeightKey.self) { panelContentHeight = $0 }
+        .background(MenuPanelWindowResizer(targetHeight: panelContentHeight))
         // Update instantly when content changes — no sliding/fly-in animations.
         .transaction { $0.animation = nil }
     }
 
-    /// Sized by its content: at most the three rows of `recentUnread`, so the
-    /// panel never grows taller than three messages.
+    /// Fixed-height content area. Unread rows scroll inside this space so the
+    /// menu-bar popover height never changes as messages arrive or are read.
     @ViewBuilder
     private var messageArea: some View {
-        if recentUnread.isEmpty {
-            emptyState
-                .frame(height: Self.emptyStateHeight)
-        } else {
-            unreadSection
+        Group {
+            if unreadMessages.isEmpty {
+                emptyState
+            } else {
+                unreadSection
+            }
         }
+        .frame(height: Self.messageAreaHeight, alignment: .top)
+        .clipped()
     }
 
     private var header: some View {
@@ -82,35 +97,37 @@ struct MenuPanelView: View {
     private var unreadSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Recent Unread")
+                Text("Unread")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text("Latest 3")
+                Text("\(unreadMessages.count) total")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 10)
             .padding(.top, 10)
 
-            VStack(spacing: 6) {
-                ForEach(recentUnread) { item in
-                    MenuMessageRow(
-                        stored: item,
-                        subscription: manager.subscription(id: item.subscriptionID),
-                        markRead: {
+            ScrollView {
+                LazyVStack(spacing: 6) {
+                    ForEach(unreadMessages) { item in
+                        MenuMessageRow(
+                            stored: item,
+                            subscription: manager.subscription(id: item.subscriptionID),
+                            markRead: {
+                                manager.markRead(subscriptionID: item.subscriptionID, messageID: item.message.id)
+                            }
+                        )
+                        .onTapGesture {
                             manager.markRead(subscriptionID: item.subscriptionID, messageID: item.message.id)
+                            manager.pendingReveal = (item.subscriptionID, item.message.id)
+                            openMain()
                         }
-                    )
-                    .onTapGesture {
-                        manager.markRead(subscriptionID: item.subscriptionID, messageID: item.message.id)
-                        manager.pendingReveal = (item.subscriptionID, item.message.id)
-                        openMain()
                     }
                 }
+                .padding(.horizontal, 10)
+                .padding(.bottom, 10)
             }
-            .padding(.horizontal, 10)
-            .padding(.bottom, 10)
         }
     }
 
@@ -184,11 +201,20 @@ struct MenuPanelView: View {
     }
 }
 
-/// Keeps the menu-bar extra window fitted to the SwiftUI content as unread
-/// rows are removed. `MenuBarExtra` windows can keep their previous taller
-/// frame after content shrinks, which leaves a blank area above the footer.
+private struct MenuPanelHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+/// Keeps the menu-bar extra window fitted to the measured SwiftUI content as
+/// unread rows are removed. `MenuBarExtra` windows can keep their previous
+/// taller frame after content shrinks, which leaves translucent blank areas
+/// around the now-smaller content.
 private struct MenuPanelWindowResizer: NSViewRepresentable {
-    let sizeKey: Int
+    let targetHeight: CGFloat
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView(frame: .zero)
@@ -198,19 +224,17 @@ private struct MenuPanelWindowResizer: NSViewRepresentable {
 
     func updateNSView(_ view: NSView, context: Context) {
         DispatchQueue.main.async {
-            guard let window = view.window, let contentView = window.contentView else { return }
-            let fittingSize = contentView.fittingSize
-            guard fittingSize.width > 0, fittingSize.height > 0 else { return }
+            guard targetHeight > 0, let window = view.window else { return }
 
             let currentFrame = window.frame
-            let targetHeight = fittingSize.height
-            guard abs(currentFrame.height - targetHeight) > 0.5 else { return }
+            let roundedHeight = ceil(targetHeight)
+            guard abs(currentFrame.height - roundedHeight) > 0.5 else { return }
 
             let targetFrame = NSRect(
                 x: currentFrame.minX,
-                y: currentFrame.maxY - targetHeight,
+                y: currentFrame.maxY - roundedHeight,
                 width: currentFrame.width,
-                height: targetHeight
+                height: roundedHeight
             )
             window.setFrame(targetFrame, display: true, animate: false)
         }

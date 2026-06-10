@@ -69,7 +69,9 @@ git push origin v1.0.0          # triggers the Release workflow
 ```
 
 Both produce an identical release. Use [semver](https://semver.org/) tags
-(`vMAJOR.MINOR.PATCH`); release notes are generated automatically.
+(`vMAJOR.MINOR.PATCH`); release notes are generated automatically. The release
+workflow also writes that tag into the app bundle, so the same version appears
+in **Settings → About** inside the app.
 
 ## 🚀 Build & Run
 

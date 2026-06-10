@@ -25,6 +25,19 @@ struct SettingsView: View {
         }
     }
 
+    private var versionText: String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        if let label = info["NtfyBuildVersionLabel"] as? String, !label.isEmpty {
+            return "Version \(label)"
+        }
+
+        let version = info["CFBundleShortVersionString"] as? String ?? "Unknown"
+        guard let build = info["CFBundleVersion"] as? String, !build.isEmpty else {
+            return "Version \(version)"
+        }
+        return "Version \(version) (build \(build))"
+    }
+
     var body: some View {
         TabView {
             generalTab
@@ -119,7 +132,7 @@ struct SettingsView: View {
                     .font(.system(size: 36)).foregroundStyle(.white)
             }
             Text("Ntfy for Mac").font(.title2.bold())
-            Text("Version 1.0")
+            Text(versionText)
                 .font(.caption).foregroundStyle(.secondary)
             Text("A native menu-bar client for ntfy.sh and self-hosted ntfy servers.")
                 .font(.subheadline)
