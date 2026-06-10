@@ -17,9 +17,10 @@ struct MenuPanelView: View {
         Array(manager.recentMessages.filter { !$0.isRead }.prefix(3))
     }
 
-    /// Compact fixed height for the empty state so the panel keeps a sensible
-    /// shape when there is nothing to show.
-    private static let emptyStateHeight: CGFloat = 140
+    /// Fixed message area height so the menu-bar panel keeps a stable size as
+    /// unread messages are marked read one by one. This is sized for the
+    /// heading plus up to three compact message rows.
+    private static let messageAreaHeight: CGFloat = 320
 
     var body: some View {
         VStack(spacing: 0) {
@@ -46,16 +47,20 @@ struct MenuPanelView: View {
         .transaction { $0.animation = nil }
     }
 
-    /// Sized by its content: at most the three rows of `recentUnread`, so the
-    /// panel never grows taller than three messages.
+    /// Fixed-height content area: at most the three rows of `recentUnread`, with
+    /// empty space kept intentionally so the popover does not jump shorter after
+    /// the last unread item is marked read.
     @ViewBuilder
     private var messageArea: some View {
-        if recentUnread.isEmpty {
-            emptyState
-                .frame(height: Self.emptyStateHeight)
-        } else {
-            unreadSection
+        Group {
+            if recentUnread.isEmpty {
+                emptyState
+            } else {
+                unreadSection
+            }
         }
+        .frame(height: Self.messageAreaHeight, alignment: .top)
+        .clipped()
     }
 
     private var header: some View {
