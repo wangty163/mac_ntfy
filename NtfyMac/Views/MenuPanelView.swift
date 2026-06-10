@@ -175,26 +175,16 @@ struct MenuPanelView: View {
         .padding(12)
     }
 
-    /// Opens Settings reliably. On macOS 14+ use SwiftUI's `SettingsLink`
-    /// because it is the API that actually creates the `Settings` scene; pair it
-    /// with our focus retry so the new window does not stay behind the menu-bar
-    /// panel. macOS 13 keeps the responder-chain fallback.
-    @ViewBuilder
+    /// Opens the dedicated settings window and immediately promotes it above
+    /// the menu-bar panel. Using an addressable `Window` avoids the `Settings`
+    /// scene being created but left inactive behind the panel.
     private var settingsButton: some View {
-        if #available(macOS 14.0, *) {
-            SettingsLink {
-                Image(systemName: "gearshape")
-            }
-            .simultaneousGesture(TapGesture().onEnded {
-                AppActivation.enterWindowMode()
-                SettingsWindow.focusSoon()
-            })
-        } else {
-            Button {
-                SettingsWindow.showUsingResponderChain()
-            } label: {
-                Image(systemName: "gearshape")
-            }
+        Button {
+            SettingsWindow.prepareToOpen()
+            openWindow(id: "settings")
+            SettingsWindow.focusSoon()
+        } label: {
+            Image(systemName: "gearshape")
         }
     }
 

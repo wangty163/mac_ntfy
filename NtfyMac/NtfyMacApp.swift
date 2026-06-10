@@ -58,6 +58,17 @@ struct NtfyMacApp: App {
         }
         .menuBarExtraStyle(.window)
 
+        // Dedicated settings window opened from the menu-bar panel. The
+        // standard SwiftUI `Settings` scene can be difficult to raise from an
+        // accessory app, so the menu-bar path opens this addressable window and
+        // then explicitly focuses it.
+        Window("Settings", id: "settings") {
+            SettingsView()
+                .environmentObject(manager)
+                .environmentObject(settings)
+        }
+        .defaultSize(width: 460, height: 380)
+
         Settings {
             SettingsView()
                 .environmentObject(manager)
@@ -122,19 +133,25 @@ enum MainWindow {
 /// background.
 @MainActor
 enum SettingsWindow {
-    static func showUsingResponderChain() {
+    static func prepareToOpen() {
         AppActivation.enterWindowMode()
+        closeTransientPanels()
+    }
+
+    static func showUsingResponderChain() {
+        prepareToOpen()
         if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
             NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
         }
         focusSoon()
     }
 
-    static func focusSoon(attemptsRemaining: Int = 8) {
+    static func focusSoon(attemptsRemaining: Int = 20) {
         AppActivation.enterWindowMode()
+        closeTransientPanels()
         if focusExisting() || attemptsRemaining <= 0 { return }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
             Task { @MainActor in
                 SettingsWindow.focusSoon(attemptsRemaining: attemptsRemaining - 1)
             }
@@ -160,6 +177,16 @@ enum SettingsWindow {
         window.orderFrontRegardless()
         window.makeKeyAndOrderFront(nil)
         return true
+    }
+
+    private static func closeTransientPanels() {
+        for window in NSApp.windows where window.isVisible && isTransientPanel(window) {
+            window.orderOut(nil)
+        }
+    }
+
+    private static func isTransientPanel(_ window: NSWindow) -> Bool {
+        window is NSPanel || !window.styleMask.contains(.titled)
     }
 
     private static func isSettingsWindow(_ window: NSWindow) -> Bool {
