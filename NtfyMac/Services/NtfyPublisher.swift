@@ -45,18 +45,20 @@ enum NtfyPublisher {
         if !req.email.isEmpty { payload["email"] = req.email }
         if req.markdown { payload["markdown"] = true }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let auth = subscription.auth.authorizationHeader {
-            request.setValue(auth, forHTTPHeaderField: "Authorization")
-        }
-        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-
-        let (_, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-            throw NtfyError.http("Publish failed (HTTP \(code))")
+        let body = try JSONSerialization.data(withJSONObject: payload)
+        do {
+            try await sendPublish(url: url, body: body, subscription: subscription)
+        } catch {
+            guard LocalHostsResolver.shouldRetryWithHostsMapping(for: url, error: error) else {
+                throw error
+            }
+            let mappedURL = LocalHostsResolver.mappedURL(for: url)
+            try await sendPublish(
+                url: mappedURL.url,
+                hostHeader: mappedURL.hostHeader,
+                body: body,
+                subscription: subscription
+            )
         }
     }
 
@@ -66,13 +68,8 @@ enum NtfyPublisher {
             return .failure(URLError(.badURL))
         }
 
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 15
-        if let auth = subscription.auth.authorizationHeader {
-            request.setValue(auth, forHTTPHeaderField: "Authorization")
-        }
         do {
-            let (_, response) = try await URLSession.shared.data(for: request)
+            let response = try await sendTestRequest(url: url, subscription: subscription)
             guard let http = response as? HTTPURLResponse else {
                 return .failure(NtfyError.http("No response"))
             }
@@ -83,7 +80,69 @@ enum NtfyPublisher {
             default: return .failure(NtfyError.http("HTTP \(http.statusCode)"))
             }
         } catch {
-            return .failure(error)
+            guard LocalHostsResolver.shouldRetryWithHostsMapping(for: url, error: error) else {
+                return .failure(error)
+            }
+            let mappedURL = LocalHostsResolver.mappedURL(for: url)
+            do {
+                let response = try await sendTestRequest(
+                    url: mappedURL.url,
+                    hostHeader: mappedURL.hostHeader,
+                    subscription: subscription
+                )
+                guard let http = response as? HTTPURLResponse else {
+                    return .failure(NtfyError.http("No response"))
+                }
+                switch http.statusCode {
+                case 200...299: return .success(())
+                case 401, 403: return .failure(NtfyError.http("Authentication failed"))
+                case 404: return .failure(NtfyError.http("Topic or server not found"))
+                default: return .failure(NtfyError.http("HTTP \(http.statusCode)"))
+                }
+            } catch {
+                return .failure(error)
+            }
         }
+    }
+
+    private static func sendPublish(
+        url: URL,
+        hostHeader: String? = nil,
+        body: Data,
+        subscription: Subscription
+    ) async throws {
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let hostHeader {
+            request.setValue(hostHeader, forHTTPHeaderField: "Host")
+        }
+        if let auth = subscription.auth.authorizationHeader {
+            request.setValue(auth, forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = body
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            throw NtfyError.http("Publish failed (HTTP \(code))")
+        }
+    }
+
+    private static func sendTestRequest(
+        url: URL,
+        hostHeader: String? = nil,
+        subscription: Subscription
+    ) async throws -> URLResponse {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+        if let hostHeader {
+            request.setValue(hostHeader, forHTTPHeaderField: "Host")
+        }
+        if let auth = subscription.auth.authorizationHeader {
+            request.setValue(auth, forHTTPHeaderField: "Authorization")
+        }
+        let (_, response) = try await URLSession.shared.data(for: request)
+        return response
     }
 }
