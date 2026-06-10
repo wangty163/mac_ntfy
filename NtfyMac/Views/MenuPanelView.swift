@@ -38,22 +38,11 @@ struct MenuPanelView: View {
 
     @ViewBuilder
     private var messageArea: some View {
-        if recent.isEmpty {
+        if recentUnread.isEmpty {
             emptyState
         } else {
             ScrollView {
-                LazyVStack(spacing: 6) {
-                    ForEach(recent) { item in
-                        MenuMessageRow(stored: item,
-                                       subscription: manager.subscription(id: item.subscriptionID))
-                            .onTapGesture {
-                                manager.markRead(subscriptionID: item.subscriptionID, messageID: item.message.id)
-                                manager.pendingReveal = (item.subscriptionID, item.message.id)
-                                openMain()
-                            }
-                    }
-                }
-                .padding(10)
+                unreadSection
             }
         }
     }
