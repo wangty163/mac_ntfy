@@ -29,6 +29,8 @@ struct MenuPanelView: View {
             footer
         }
         .frame(width: 360)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(MenuPanelWindowResizer(sizeKey: recentUnread.count))
         // Update instantly when content changes — no sliding/fly-in animations.
         .transaction { $0.animation = nil }
     }
@@ -108,8 +110,6 @@ struct MenuPanelView: View {
             Text(manager.messages.isEmpty ? "No notifications yet" : "No unread notifications")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            Button(manager.messages.isEmpty ? "Add a subscription" : "Open Ntfy") { openMain() }
-                .buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 30)
@@ -170,6 +170,39 @@ struct MenuPanelView: View {
         // (its own Stage Manager stage, Mission Control entry, etc.).
         AppActivation.enterWindowMode()
         openWindow(id: "main")
+    }
+}
+
+/// Keeps the menu-bar extra window fitted to the SwiftUI content as unread
+/// rows are removed. `MenuBarExtra` windows can keep their previous taller
+/// frame after content shrinks, which leaves a blank area above the footer.
+private struct MenuPanelWindowResizer: NSViewRepresentable {
+    let sizeKey: Int
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        view.setContentHuggingPriority(.required, for: .vertical)
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        DispatchQueue.main.async {
+            guard let window = view.window, let contentView = window.contentView else { return }
+            let fittingSize = contentView.fittingSize
+            guard fittingSize.width > 0, fittingSize.height > 0 else { return }
+
+            let currentFrame = window.frame
+            let targetHeight = fittingSize.height
+            guard abs(currentFrame.height - targetHeight) > 0.5 else { return }
+
+            let targetFrame = NSRect(
+                x: currentFrame.minX,
+                y: currentFrame.maxY - targetHeight,
+                width: currentFrame.width,
+                height: targetHeight
+            )
+            window.setFrame(targetFrame, display: true, animate: false)
+        }
     }
 }
 
