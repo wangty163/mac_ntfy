@@ -175,14 +175,26 @@ struct MenuPanelView: View {
         .padding(12)
     }
 
-    /// Opens Settings through AppKit's standard Settings/Preferences selectors,
-    /// then explicitly raises the resulting window. This avoids relying on
-    /// `openSettings`, which is not available in the Xcode 15.4 SDK used by CI.
+    /// Opens Settings reliably. On macOS 14+ use SwiftUI's `SettingsLink`
+    /// because it is the API that actually creates the `Settings` scene; pair it
+    /// with our focus retry so the new window does not stay behind the menu-bar
+    /// panel. macOS 13 keeps the responder-chain fallback.
+    @ViewBuilder
     private var settingsButton: some View {
-        Button {
-            SettingsWindow.showUsingResponderChain()
-        } label: {
-            Image(systemName: "gearshape")
+        if #available(macOS 14.0, *) {
+            SettingsLink {
+                Image(systemName: "gearshape")
+            }
+            .simultaneousGesture(TapGesture().onEnded {
+                AppActivation.enterWindowMode()
+                SettingsWindow.focusSoon()
+            })
+        } else {
+            Button {
+                SettingsWindow.showUsingResponderChain()
+            } label: {
+                Image(systemName: "gearshape")
+            }
         }
     }
 
