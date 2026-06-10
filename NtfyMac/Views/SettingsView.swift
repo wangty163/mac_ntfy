@@ -48,7 +48,9 @@ struct SettingsView: View {
                 .tabItem { Label("About", systemImage: "info.circle") }
         }
         .frame(width: 460, height: 380)
-        .onAppear { AppActivation.enterWindowMode() }
+        .toggleStyle(.switch)
+        .tint(Theme.settingsControlTint)
+        .onAppear { SettingsWindow.focusSoon() }
         .onDisappear { AppActivation.exitWindowModeIfNeeded() }
     }
 

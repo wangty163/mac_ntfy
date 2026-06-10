@@ -36,6 +36,7 @@ extension Color {
 
 enum Theme {
     static let cornerRadius: CGFloat = 12
+    static let settingsControlTint = Color(hex: "#3B82F6")!
     static let accentPalette: [String] = [
         "#3B82F6", "#8B5CF6", "#EC4899", "#F97316",
         "#10B981", "#14B8A6", "#EF4444", "#F59E0B",

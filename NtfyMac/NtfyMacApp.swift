@@ -116,6 +116,66 @@ enum MainWindow {
     }
 }
 
+/// Opens and foregrounds the SwiftUI `Settings` scene when launched from the
+/// menu-bar extra. Accessory apps can otherwise create the settings window
+/// without making it key, which leaves it looking like it opened in the
+/// background.
+@MainActor
+enum SettingsWindow {
+    static func showUsingResponderChain() {
+        AppActivation.enterWindowMode()
+        if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
+            NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+        }
+        focusSoon()
+    }
+
+    static func focusSoon(attemptsRemaining: Int = 8) {
+        AppActivation.enterWindowMode()
+        if focusExisting() || attemptsRemaining <= 0 { return }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            Task { @MainActor in
+                SettingsWindow.focusSoon(attemptsRemaining: attemptsRemaining - 1)
+            }
+        }
+    }
+
+    @discardableResult
+    private static func focusExisting() -> Bool {
+        let candidates = NSApp.windows.filter { window in
+            window.isVisible
+                && !(window is NSPanel)
+                && window.styleMask.contains(.titled)
+                && window.canBecomeMain
+        }
+
+        guard let window = candidates.first(where: isSettingsWindow)
+                ?? candidates.first(where: { !isMainWindow($0) }) else {
+            return false
+        }
+
+        NSApp.activate(ignoringOtherApps: true)
+        window.deminiaturize(nil)
+        window.orderFrontRegardless()
+        window.makeKeyAndOrderFront(nil)
+        return true
+    }
+
+    private static func isSettingsWindow(_ window: NSWindow) -> Bool {
+        let identifier = window.identifier?.rawValue.lowercased() ?? ""
+        let title = window.title.lowercased()
+        return identifier.contains("settings")
+            || identifier.contains("preferences")
+            || title.contains("settings")
+            || title.contains("preferences")
+    }
+
+    private static func isMainWindow(_ window: NSWindow) -> Bool {
+        window.identifier?.rawValue.hasPrefix("main") == true
+    }
+}
+
 /// Ensures the launch window is opened at most once.
 @MainActor
 enum LaunchWindowOpener {

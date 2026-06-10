@@ -183,10 +183,7 @@ struct MenuPanelView: View {
             ModernSettingsButton()
         } else {
             Button {
-                AppActivation.enterWindowMode()
-                if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
-                    NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-                }
+                SettingsWindow.showUsingResponderChain()
             } label: {
                 Image(systemName: "gearshape")
             }
@@ -241,13 +238,19 @@ private struct MenuPanelWindowResizer: NSViewRepresentable {
     }
 }
 
-/// Settings button for macOS 14+, using the official `SettingsLink`, which
-/// opens the `Settings` scene reliably. Focus is handled by `SettingsView`'s
-/// `onAppear` (which promotes the app to a regular, front window).
+/// Settings button for macOS 14+, using the official `openSettings` action and
+/// then explicitly raising the settings window. A plain `SettingsLink` can open
+/// behind the menu-bar panel because the app normally runs as an accessory app.
 @available(macOS 14.0, *)
 private struct ModernSettingsButton: View {
+    @Environment(\.openSettings) private var openSettings
+
     var body: some View {
-        SettingsLink {
+        Button {
+            AppActivation.enterWindowMode()
+            openSettings()
+            SettingsWindow.focusSoon()
+        } label: {
             Image(systemName: "gearshape")
         }
     }
