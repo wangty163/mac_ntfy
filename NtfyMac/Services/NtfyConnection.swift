@@ -79,6 +79,12 @@ final class NtfyConnection {
                 backoff = 1
             } catch is CancellationError {
                 break
+            } catch let error as NtfyError where error.isAuthFailure {
+                // Bad credentials won't fix themselves by retrying; stop and
+                // leave the error visible until the user edits the subscription
+                // (which triggers an explicit restart).
+                setState(.disconnected(reason: error.localizedDescription))
+                return
             } catch {
                 setState(.disconnected(reason: error.localizedDescription))
             }
@@ -107,14 +113,16 @@ final class NtfyConnection {
         let (bytes, response) = try await session.bytes(for: request)
 
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-            let reason: String
             switch http.statusCode {
-            case 401, 403: reason = "Authentication failed (\(http.statusCode))"
-            case 404: reason = "Topic or server not found (404)"
-            case 429: reason = "Rate limited (429)"
-            default: reason = "Server returned HTTP \(http.statusCode)"
+            case 401, 403:
+                throw NtfyError.unauthorized("Authentication failed (\(http.statusCode))")
+            case 404:
+                throw NtfyError.http("Topic or server not found (404)")
+            case 429:
+                throw NtfyError.http("Rate limited (429)")
+            default:
+                throw NtfyError.http("Server returned HTTP \(http.statusCode)")
             }
-            throw NtfyError.http(reason)
         }
 
         for try await line in bytes.lines {
@@ -150,10 +158,18 @@ final class NtfyConnection {
 
 enum NtfyError: LocalizedError {
     case http(String)
+    case unauthorized(String)
 
     var errorDescription: String? {
         switch self {
         case let .http(reason): return reason
+        case let .unauthorized(reason): return reason
         }
+    }
+
+    /// Authentication/permission failures that won't be fixed by reconnecting.
+    var isAuthFailure: Bool {
+        if case .unauthorized = self { return true }
+        return false
     }
 }

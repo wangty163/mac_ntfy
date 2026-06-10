@@ -60,6 +60,10 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         }
         content.body = body
 
+        // Group notifications from the same subscription together in
+        // Notification Center.
+        content.threadIdentifier = subscription.id.uuidString
+
         let priority = message.resolvedPriority
         content.interruptionLevel = interruptionLevel(for: priority)
         content.relevanceScore = Double(priority.rawValue) / 5.0

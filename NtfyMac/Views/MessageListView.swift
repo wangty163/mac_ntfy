@@ -11,6 +11,7 @@ struct MessageListView: View {
     @Binding var selectedMessageID: String?
     @State private var searchText = ""
     @State private var showingCompose = false
+    @FocusState private var searchFocused: Bool
 
     private var subscription: Subscription? {
         if case let .subscription(id) = selection { return manager.subscription(id: id) }
@@ -101,9 +102,25 @@ struct MessageListView: View {
                 TextField("Search", text: $searchText)
                     .textFieldStyle(.plain)
                     .frame(width: 140)
+                    .focused($searchFocused)
+                if !searchText.isEmpty {
+                    Button {
+                        searchText = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Clear search")
+                }
             }
             .padding(.horizontal, 8).padding(.vertical, 5)
             .background(Capsule().fill(Color(nsColor: .controlBackgroundColor)))
+            // ⌘F focuses the search field, as in every standard Mac app.
+            .overlay {
+                Button("") { searchFocused = true }
+                    .keyboardShortcut("f", modifiers: .command)
+                    .hidden()
+            }
 
             if subscription != nil {
                 Button { showingCompose = true } label: {

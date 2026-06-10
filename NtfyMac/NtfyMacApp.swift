@@ -36,6 +36,14 @@ struct NtfyMacApp: App {
         .defaultSize(width: 1000, height: 640)
         .commands {
             CommandGroup(replacing: .newItem) {}
+            // Explicit Quit so the App menu always shows "Quit Ntfy" bound to
+            // ⌘Q while a window is focused. (A key monitor in AppDelegate also
+            // covers the cases where SwiftUI's menu isn't active — e.g. the
+            // menu-bar popover, or just after an activation-policy switch.)
+            CommandGroup(replacing: .appTermination) {
+                Button("Quit Ntfy") { NSApp.terminate(nil) }
+                    .keyboardShortcut("q", modifiers: .command)
+            }
         }
 
         // Menu-bar entry — the always-available control surface.
@@ -152,6 +160,7 @@ enum AppActivation {
 /// auto-opened window at launch.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var isDuplicateInstance = false
+    private var quitMonitor: Any?
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         enforceSingleInstance()
@@ -159,6 +168,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard !isDuplicateInstance else { return }
+
+        installQuitMonitor()
 
         // Ask for notification permission once the app is fully launched (more
         // reliable than doing it during App.init).
@@ -185,8 +196,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Guarantees ⌘Q quits the app from anywhere the app is active — the main
+    /// window, the menu-bar popover, or right after the activation policy flips
+    /// between regular and accessory, where SwiftUI's menu key-equivalent can be
+    /// momentarily unavailable. This makes ⌘Q behave like every other Mac app.
+    private func installQuitMonitor() {
+        quitMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let isCommandOnly = event.modifierFlags
+                .intersection(.deviceIndependentFlagsMask) == .command
+            if isCommandOnly, event.charactersIgnoringModifiers?.lowercased() == "q" {
+                NSApp.terminate(nil)
+                return nil
+            }
+            return event
+        }
+    }
+
+    /// Reopening the app (clicking the Dock icon, or relaunching while already
+    /// running) should surface the main window. AppKit's default reopen doesn't
+    /// recreate a closed SwiftUI `Window` scene, so when no window is visible we
+    /// open one explicitly through the `MainWindow` bridge.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        true
+        if !flag {
+            Task { @MainActor in MainWindow.show() }
+        }
+        return true
     }
 
     /// Keep running as a menu-bar agent after the main window is closed.
