@@ -33,6 +33,9 @@ struct MenuPanelView: View {
         .background(MenuPanelWindowResizer(sizeKey: recentUnread.map(\.id).hashValue))
         // Update instantly when content changes — no sliding/fly-in animations.
         .transaction { $0.animation = nil }
+        // Opening the panel is a natural "is it working?" check — skip any
+        // pending backoff and retry stalled streams right away.
+        .onAppear { manager.retryStalledConnections() }
     }
 
     /// Sized by its content: at most the three rows of `recentUnread`, so the

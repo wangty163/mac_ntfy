@@ -9,9 +9,13 @@
 //
 
 import Foundation
+import os
 
 @MainActor
 final class NtfyConnection {
+    /// Diagnostics: `log stream --predicate 'subsystem == "com.ntfymac"' --info`
+    private static let log = Logger(subsystem: "com.ntfymac", category: "connection")
+
     let subscriptionID: UUID
     private(set) var subscription: Subscription
     private(set) var state: ConnectionState = .idle
@@ -80,29 +84,43 @@ final class NtfyConnection {
         let maxBackoff: TimeInterval = 30
 
         while !Task.isCancelled {
+            var establishedAt: Date?
+
             do {
                 setState(.connecting)
-                try await streamOnce()
+                try await streamOnce { establishedAt = Date() }
                 // A normal stream end (server closed the connection) — reconnect
                 // promptly without escalating the backoff.
                 backoff = 1
             } catch is CancellationError {
                 break
             } catch let error as NtfyError where error.isAuthFailure {
-                // Bad credentials won't fix themselves by retrying; stop and
-                // leave the error visible until the user edits the subscription
-                // (which triggers an explicit restart).
+                if Task.isCancelled { break }
+                // Usually bad credentials, but reverse proxies can also return
+                // transient 401/403s while the server itself is fine — keep
+                // retrying at the slowest cadence instead of giving up for
+                // good, and leave the reason visible in the UI meanwhile.
+                Self.log.error("[\(self.subscription.topic, privacy: .public)] auth failed: \(error.localizedDescription, privacy: .public)")
                 setState(.disconnected(reason: error.localizedDescription))
-                return
+                backoff = maxBackoff
             } catch {
                 // Cancellation can surface as URLError(.cancelled) from
                 // URLSession rather than CancellationError; don't let a stale
                 // task overwrite the state a restarted connection just set.
                 if Task.isCancelled { break }
+                Self.log.error("[\(self.subscription.topic, privacy: .public)] stream failed: \(error.localizedDescription, privacy: .public)")
                 setState(.disconnected(reason: error.localizedDescription))
             }
 
             if Task.isCancelled { break }
+
+            // A stream that lived for a while means this failure is a fresh
+            // outage, not an escalating one — start the backoff over so a
+            // long-lived stream that drops reconnects in ~1s instead of
+            // inheriting a delay escalated by failures from hours ago.
+            if let establishedAt, Date().timeIntervalSince(establishedAt) >= 30 {
+                backoff = 1
+            }
 
             let jitter = Double.random(in: 0...0.5)
             let wait = backoff + jitter
@@ -115,7 +133,9 @@ final class NtfyConnection {
         // connection that has since moved to .connecting.
     }
 
-    private func streamOnce() async throws {
+    /// Connects once and reads the stream until it ends or fails.
+    /// `onEstablished` fires after the server has accepted the request.
+    private func streamOnce(onEstablished: () -> Void) async throws {
         guard let url = subscription.streamURL() else {
             throw URLError(.badURL)
         }
@@ -128,7 +148,28 @@ final class NtfyConnection {
         let session = Self.makeSession()
         defer { session.invalidateAndCancel() }
 
-        let (bytes, response) = try await session.bytes(for: request)
+        Self.log.info("[\(self.subscription.topic, privacy: .public)] connecting to \(url.absoluteString, privacy: .public)")
+
+        // Race the handshake against a short timeout. The 100s request timeout
+        // is sized for missed keepalives on an established stream; a hung
+        // *connection attempt* (stale route, dead DNS, half-open socket) should
+        // fail in seconds and retry, not occupy "Connecting…" for minutes.
+        let (bytes, response) = try await withThrowingTaskGroup(
+            of: (URLSession.AsyncBytes, URLResponse).self
+        ) { group in
+            group.addTask {
+                try await session.bytes(for: request)
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: 15_000_000_000)
+                throw URLError(.timedOut)
+            }
+            guard let first = try await group.next() else {
+                throw URLError(.timedOut)
+            }
+            group.cancelAll()
+            return first
+        }
 
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             switch http.statusCode {
@@ -143,10 +184,15 @@ final class NtfyConnection {
             }
         }
 
+        onEstablished()
+        Self.log.info("[\(self.subscription.topic, privacy: .public)] stream established")
+
         for try await line in bytes.lines {
             if Task.isCancelled { break }
             handle(line: line)
         }
+
+        Self.log.info("[\(self.subscription.topic, privacy: .public)] stream closed by server")
     }
 
     private func handle(line: String) {

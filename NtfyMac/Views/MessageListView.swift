@@ -158,7 +158,7 @@ struct MessageListView: View {
             return "\(manager.messages.count) messages across \(manager.subscriptions.count) topics"
         case let .subscription(id):
             let state = manager.state(for: id)
-            return "\(subscription?.topicURLString ?? "") · \(state.label)"
+            return "\(subscription?.topicURLString ?? "") · \(state.detailedLabel)"
         }
     }
 }

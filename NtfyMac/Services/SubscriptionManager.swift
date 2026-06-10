@@ -25,6 +25,7 @@ final class SubscriptionManager: ObservableObject {
     private let pathMonitor = NWPathMonitor()
     private let monitorQueue = DispatchQueue(label: "com.ntfymac.network-monitor")
     private var hasNetwork = true
+    private var watchdog: Timer?
     /// Which interfaces the current path uses (e.g. ["en0"]). Switching Wi-Fi
     /// networks or hopping between Wi-Fi/Ethernet/VPN keeps the path
     /// "satisfied" but silently kills established streams, so we track the
@@ -133,6 +134,30 @@ final class SubscriptionManager: ObservableObject {
 
     func reconnectAll() {
         for (_, connection) in connections { connection.restart() }
+    }
+
+    /// Immediately retries streams that are waiting out a backoff or sitting
+    /// on an error, without disturbing healthy ones. Called when the user
+    /// interacts with the app — the moment they're looking is the moment a
+    /// stale "Offline" hurts most — and by the periodic watchdog.
+    func retryStalledConnections() {
+        for sub in subscriptions where !sub.isMuted {
+            guard let connection = connections[sub.id] else {
+                // No connection object at all — shouldn't happen, but heal it.
+                connect(sub)
+                continue
+            }
+            if !connection.isRunning {
+                connection.start()
+                continue
+            }
+            switch state(for: sub.id) {
+            case .reconnecting, .disconnected:
+                connection.restart()
+            case .idle, .connecting, .connected:
+                break
+            }
+        }
     }
 
     private func connect(_ sub: Subscription, restart: Bool = false) {
@@ -264,6 +289,32 @@ final class SubscriptionManager: ObservableObject {
             object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in self?.reconnectAll() }
+        }
+
+        // The user bringing the app forward is the best moment to skip any
+        // remaining backoff and retry right away.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.retryStalledConnections() }
+        }
+
+        // Last line of defense: if a connection's run loop ever dies without
+        // rescheduling itself (or a subscription lost its connection object),
+        // bring it back. Healthy and backoff-waiting streams are untouched.
+        watchdog = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.healDeadConnections() }
+        }
+    }
+
+    private func healDeadConnections() {
+        for sub in subscriptions where !sub.isMuted {
+            guard let connection = connections[sub.id] else {
+                connect(sub)
+                continue
+            }
+            if !connection.isRunning { connection.start() }
         }
     }
 

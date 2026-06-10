@@ -28,6 +28,15 @@ enum ConnectionState: Equatable {
         }
     }
 
+    /// Like `label`, but carries the failure reason so the user can see *why*
+    /// a topic is offline (e.g. "Offline · Server returned HTTP 502").
+    var detailedLabel: String {
+        if case let .disconnected(reason) = self, !reason.isEmpty {
+            return "Offline · \(reason)"
+        }
+        return label
+    }
+
     var symbol: String {
         switch self {
         case .idle: return "pause.circle"
