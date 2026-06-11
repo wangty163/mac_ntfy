@@ -58,6 +58,17 @@ struct NtfyMacApp: App {
         }
         .menuBarExtraStyle(.window)
 
+        // Dedicated settings window opened from the menu-bar panel. The
+        // standard SwiftUI `Settings` scene can be difficult to raise from an
+        // accessory app, so the menu-bar path opens this addressable window and
+        // then explicitly focuses it.
+        Window("Settings", id: "settings") {
+            SettingsView()
+                .environmentObject(manager)
+                .environmentObject(settings)
+        }
+        .defaultSize(width: 460, height: 380)
+
         Settings {
             SettingsView()
                 .environmentObject(manager)
@@ -113,6 +124,82 @@ enum MainWindow {
             // Fallback if the SwiftUI action hasn't been registered yet.
             window.makeKeyAndOrderFront(nil)
         }
+    }
+}
+
+/// Opens and foregrounds the SwiftUI `Settings` scene when launched from the
+/// menu-bar extra. Accessory apps can otherwise create the settings window
+/// without making it key, which leaves it looking like it opened in the
+/// background.
+@MainActor
+enum SettingsWindow {
+    static func prepareToOpen() {
+        AppActivation.enterWindowMode()
+        closeTransientPanels()
+    }
+
+    static func showUsingResponderChain() {
+        prepareToOpen()
+        if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
+            NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+        }
+        focusSoon()
+    }
+
+    static func focusSoon(attemptsRemaining: Int = 20) {
+        AppActivation.enterWindowMode()
+        closeTransientPanels()
+        if focusExisting() || attemptsRemaining <= 0 { return }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+            Task { @MainActor in
+                SettingsWindow.focusSoon(attemptsRemaining: attemptsRemaining - 1)
+            }
+        }
+    }
+
+    @discardableResult
+    private static func focusExisting() -> Bool {
+        let candidates = NSApp.windows.filter { window in
+            window.isVisible
+                && !(window is NSPanel)
+                && window.styleMask.contains(.titled)
+                && window.canBecomeMain
+        }
+
+        guard let window = candidates.first(where: isSettingsWindow)
+                ?? candidates.first(where: { !isMainWindow($0) }) else {
+            return false
+        }
+
+        NSApp.activate(ignoringOtherApps: true)
+        window.deminiaturize(nil)
+        window.orderFrontRegardless()
+        window.makeKeyAndOrderFront(nil)
+        return true
+    }
+
+    private static func closeTransientPanels() {
+        for window in NSApp.windows where window.isVisible && isTransientPanel(window) {
+            window.orderOut(nil)
+        }
+    }
+
+    private static func isTransientPanel(_ window: NSWindow) -> Bool {
+        window is NSPanel || !window.styleMask.contains(.titled)
+    }
+
+    private static func isSettingsWindow(_ window: NSWindow) -> Bool {
+        let identifier = window.identifier?.rawValue.lowercased() ?? ""
+        let title = window.title.lowercased()
+        return identifier.contains("settings")
+            || identifier.contains("preferences")
+            || title.contains("settings")
+            || title.contains("preferences")
+    }
+
+    private static func isMainWindow(_ window: NSWindow) -> Bool {
+        window.identifier?.rawValue.hasPrefix("main") == true
     }
 }
 
