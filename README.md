@@ -140,6 +140,27 @@ Lessons learned from debugging this case:
   stale `since` cursor. ntfy only caches messages for a limited time, so the app
   clears a rejected saved cursor and reconnects without it.
 
+### Topics go offline while Clash/Surge (system proxy) is running
+
+When a proxy tool like Clash Verge enables the macOS **system proxy**,
+`URLSession` auto-detects it and forces every request — including the
+long-lived notification stream — through the local proxy. That breaks in ways a
+browser test won't show: the proxy may buffer or stall streaming responses, and
+it resolves hostnames itself, so local `/etc/hosts` overrides are lost. A
+DIRECT rule for the ntfy server in the proxy's config does **not** help,
+because the connection still enters the proxy first.
+
+The app therefore controls proxying explicitly via **Settings → General →
+Proxy** instead of relying on system-proxy auto-detection:
+
+- **Direct (ignore system proxy)** — the default. Connects straight to the
+  server even while a system proxy is active.
+- **System proxy** — the old auto-detect behavior, for setups where it works.
+- **Custom proxy** — route all ntfy traffic through an explicit HTTP (CONNECT)
+  or SOCKS5 proxy that is known to handle streaming, e.g. Clash's mixed/SOCKS
+  port. This is the reliable choice when the ntfy server itself must be
+  reached through the proxy.
+
 ## 🏗 Architecture
 
 ```
@@ -152,6 +173,7 @@ NtfyMac/
 │  └─ AppSettings.swift      user preferences (UserDefaults)
 ├─ Services/
 │  ├─ NtfyConnection.swift   one streaming /json connection + auto-reconnect
+│  ├─ ProxyConfig.swift      explicit proxy mode (direct/system/custom)
 │  ├─ SubscriptionManager.swift   owns subscriptions, history, monitors net/sleep
 │  ├─ NotificationService.swift   UserNotifications bridge
 │  ├─ NtfyPublisher.swift    publish + connection test

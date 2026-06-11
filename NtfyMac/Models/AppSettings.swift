@@ -52,6 +52,32 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    // Proxy handling for all ntfy traffic; see ProxyConfig for the rationale.
+    @Published var proxyMode: ProxyMode {
+        didSet {
+            defaults.set(proxyMode.rawValue, forKey: ProxyConfig.Keys.mode)
+            notifyProxyChanged()
+        }
+    }
+    @Published var proxyType: ProxyType {
+        didSet {
+            defaults.set(proxyType.rawValue, forKey: ProxyConfig.Keys.type)
+            notifyProxyChanged()
+        }
+    }
+    @Published var proxyHost: String {
+        didSet {
+            defaults.set(proxyHost, forKey: ProxyConfig.Keys.host)
+            notifyProxyChanged()
+        }
+    }
+    @Published var proxyPort: Int {
+        didSet {
+            defaults.set(proxyPort, forKey: ProxyConfig.Keys.port)
+            notifyProxyChanged()
+        }
+    }
+
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
@@ -65,6 +91,7 @@ final class AppSettings: ObservableObject {
             Keys.showMenuBarCount: true,
             Keys.openWindowAtLaunch: true,
         ])
+        defaults.register(defaults: ProxyConfig.registrationDefaults)
         defaultServer = defaults.string(forKey: Keys.defaultServer) ?? "https://ntfy.sh"
         showNotifications = defaults.bool(forKey: Keys.showNotifications)
         playSound = defaults.bool(forKey: Keys.playSound)
@@ -73,5 +100,15 @@ final class AppSettings: ObservableObject {
         showMenuBarCount = defaults.bool(forKey: Keys.showMenuBarCount)
         openWindowAtLaunch = defaults.bool(forKey: Keys.openWindowAtLaunch)
         launchAtLogin = LaunchAtLogin.isEnabled
+
+        let proxy = ProxyConfig.current(defaults: defaults)
+        proxyMode = proxy.mode
+        proxyType = proxy.type
+        proxyHost = proxy.host
+        proxyPort = proxy.port
+    }
+
+    private func notifyProxyChanged() {
+        NotificationCenter.default.post(name: .ntfyProxyConfigChanged, object: nil)
     }
 }
