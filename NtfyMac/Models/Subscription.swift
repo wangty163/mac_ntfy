@@ -93,23 +93,6 @@ struct Subscription: Identifiable, Codable, Equatable, Hashable {
         subscriptionURL(endpoint: "json", forcePoll: forcePoll, includeCursor: includeCursor)
     }
 
-    /// Builds the WebSocket subscription URL. WebSockets travel through HTTP
-    /// proxies as an explicit upgrade tunnel, which is more reliable for ntfy's
-    /// live feed than a buffered HTTP response when a local rule-based proxy is
-    /// enabled.
-    func webSocketURL(includeCursor: Bool = true) -> URL? {
-        guard let url = subscriptionURL(endpoint: "ws", includeCursor: includeCursor),
-              var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        else { return nil }
-
-        switch components.scheme?.lowercased() {
-        case "https": components.scheme = "wss"
-        case "http": components.scheme = "ws"
-        default: break
-        }
-        return components.url
-    }
-
     private func subscriptionURL(
         endpoint: String,
         forcePoll: Bool = false,

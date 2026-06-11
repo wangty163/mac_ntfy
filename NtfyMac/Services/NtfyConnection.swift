@@ -2,10 +2,10 @@
 //  NtfyConnection.swift
 //  NtfyMac
 //
-//  Maintains one long-lived streaming connection to an ntfy topic's
-//  `/<topic>/json` endpoint. The server emits newline-delimited JSON; we read
-//  it line-by-line and reconnect automatically with exponential backoff so the
-//  subscription survives network drops, server restarts and system sleep.
+//  Maintains a resilient ntfy subscription using finite poll requests to the
+//  `/<topic>/json?poll=1` endpoint. Polling keeps traffic compatible with
+//  local system proxies that can buffer or stall long-lived streaming responses,
+//  while the reconnect loop survives network drops, server restarts and sleep.
 //
 
 import Foundation
@@ -30,16 +30,6 @@ final class NtfyConnection {
     init(subscription: Subscription) {
         self.subscriptionID = subscription.id
         self.subscription = subscription
-    }
-
-    /// A fresh session per connection attempt. Reusing one session across
-    /// reconnects can hand us a half-dead pooled connection after a network
-    /// change, which then stalls until it times out.
-    private static func makeSession() -> URLSession {
-        NtfyURLSessionFactory.makeSession(
-            timeoutForRequest: 100,
-            timeoutForResource: .infinity
-        )
     }
 
     func updateSubscription(_ sub: Subscription) {
@@ -119,49 +109,11 @@ final class NtfyConnection {
     }
 
     private func streamOnce() async throws {
-        guard let wsURL = subscription.webSocketURL(),
-              let httpURL = subscription.streamURL() else {
-            throw URLError(.badURL)
-        }
-
-        if NtfyURLSessionFactory.systemProxyIsConfigured() {
-            // In Clash Verge rule mode, macOS exposes a system proxy even when a
-            // particular destination is configured as DIRECT inside Clash. Long
-            // lived HTTP/WebSocket streams can still be buffered or blocked by
-            // that local proxy layer, while short browser requests work. Use
-            // ntfy's finite poll endpoint in this mode so traffic still goes
-            // through the proxy but never depends on a held-open stream.
-            try await pollLoop()
-            return
-        }
-
-        do {
-            try await streamWebSocket(url: wsURL)
-        } catch {
-            if Task.isCancelled { throw error }
-            // If a self-hosted server or proxy does not support WebSockets, fall
-            // back to the original HTTP JSON stream. Both paths use the system
-            // proxy, but WebSockets are preferred because proxies handle them as
-            // upgrade tunnels instead of buffered HTTP responses.
-            do {
-                try await streamHTTPOnce(url: httpURL)
-            } catch {
-                if Task.isCancelled { throw error }
-                try await pollLoop()
-            }
-        }
-    }
-
-    private func streamHTTPOnce(url: URL) async throws {
-        do {
-            try await stream(url: url)
-        } catch {
-            guard LocalHostsResolver.shouldRetryWithHostsMapping(for: url, error: error) else {
-                throw error
-            }
-            let mappedURL = LocalHostsResolver.mappedURL(for: url)
-            try await stream(url: mappedURL.url, hostHeader: mappedURL.hostHeader)
-        }
+        // Always use ntfy's finite poll endpoint. It still follows macOS system
+        // proxy settings (so Clash Verge can route it), but unlike WebSocket or
+        // HTTP streaming it never requires a local proxy to keep a long-lived
+        // response open without buffering/stalling.
+        try await pollLoop()
     }
 
     private func pollLoop() async throws {
@@ -170,16 +122,30 @@ final class NtfyConnection {
                 throw URLError(.badURL)
             }
 
-            try await streamHTTPOnce(url: url)
+            try await pollOnce(url: url)
 
             if Task.isCancelled { break }
-            try await Task.sleep(nanoseconds: 10_000_000_000)
+            try await Task.sleep(nanoseconds: 5_000_000_000)
         }
     }
 
-    private func stream(url: URL, hostHeader: String? = nil) async throws {
+    private func pollOnce(url: URL) async throws {
+        do {
+            try await poll(url: url)
+        } catch {
+            guard LocalHostsResolver.shouldRetryWithHostsMapping(for: url, error: error) else {
+                throw error
+            }
+            let mappedURL = LocalHostsResolver.mappedURL(for: url)
+            try await poll(url: mappedURL.url, hostHeader: mappedURL.hostHeader)
+        }
+    }
+
+    private func poll(url: URL, hostHeader: String? = nil) async throws {
         var request = URLRequest(url: url)
-        request.timeoutInterval = 100
+        request.timeoutInterval = 15
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        request.setValue("close", forHTTPHeaderField: "Connection")
         if let hostHeader {
             request.setValue(hostHeader, forHTTPHeaderField: "Host")
         }
@@ -187,65 +153,39 @@ final class NtfyConnection {
             request.setValue(auth, forHTTPHeaderField: "Authorization")
         }
 
-        let session = Self.makeSession()
+        let session = NtfyURLSessionFactory.makeSession(
+            timeoutForRequest: 15,
+            timeoutForResource: 30
+        )
         defer { session.invalidateAndCancel() }
 
-        let (bytes, response) = try await session.bytes(for: request)
-
-        if let http = response as? HTTPURLResponse {
-            guard (200...299).contains(http.statusCode) else {
-                switch http.statusCode {
-                case 400 where subscription.lastMessageID != nil:
-                    throw NtfyError.staleCursor
-                case 401, 403:
-                    throw NtfyError.unauthorized("Authentication failed (\(http.statusCode))")
-                case 404:
-                    throw NtfyError.http("Topic or server not found (404)")
-                case 429:
-                    throw NtfyError.http("Rate limited (429)")
-                default:
-                    throw NtfyError.http("Server returned HTTP \(http.statusCode)")
-                }
-            }
-        }
+        let (data, response) = try await session.data(for: request)
+        try validateHTTPResponse(response)
 
         if !state.isConnected { setState(.connected) }
 
-        for try await line in bytes.lines {
+        guard let text = String(data: data, encoding: .utf8) else { return }
+        for line in text.components(separatedBy: .newlines) {
             if Task.isCancelled { break }
             handle(line: line)
         }
     }
 
+    private func validateHTTPResponse(_ response: URLResponse) throws {
+        guard let http = response as? HTTPURLResponse else { return }
+        guard !(200...299).contains(http.statusCode) else { return }
 
-    private func streamWebSocket(url: URL) async throws {
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 100
-        if let auth = subscription.auth.authorizationHeader {
-            request.setValue(auth, forHTTPHeaderField: "Authorization")
-        }
-        request.setValue("NtfyMac/1.0", forHTTPHeaderField: "User-Agent")
-
-        let session = Self.makeSession()
-        let task = session.webSocketTask(with: request)
-        task.resume()
-        defer {
-            task.cancel(with: .goingAway, reason: nil)
-            session.invalidateAndCancel()
-        }
-
-        while !Task.isCancelled {
-            let message = try await task.receive()
-            switch message {
-            case let .string(text):
-                handle(line: text)
-            case let .data(data):
-                if let text = String(data: data, encoding: .utf8) {
-                    handle(line: text)
-                }
-            @unknown default:
-                break
-            }
+        switch http.statusCode {
+        case 400 where subscription.lastMessageID != nil:
+            throw NtfyError.staleCursor
+        case 401, 403:
+            throw NtfyError.unauthorized("Authentication failed (\(http.statusCode))")
+        case 404:
+            throw NtfyError.http("Topic or server not found (404)")
+        case 429:
+            throw NtfyError.http("Rate limited (429)")
+        default:
+            throw NtfyError.http("Server returned HTTP \(http.statusCode)")
         }
     }
 
@@ -279,21 +219,6 @@ final class NtfyConnection {
 /// macOS's system proxy settings enabled so users can route ntfy through Clash
 /// Verge or another proxy, while still using bounded connectivity behavior.
 enum NtfyURLSessionFactory {
-    static func systemProxyIsConfigured() -> Bool {
-        guard let settings = CFNetworkCopySystemProxySettings()?.takeRetainedValue() as? [String: Any] else {
-            return false
-        }
-
-        func isEnabled(_ key: String) -> Bool {
-            (settings[key] as? NSNumber)?.boolValue == true
-        }
-
-        return isEnabled("HTTPEnable")
-            || isEnabled("HTTPSEnable")
-            || isEnabled("SOCKSEnable")
-            || isEnabled("ProxyAutoConfigEnable")
-    }
-
     static func makeSession(
         timeoutForRequest: TimeInterval,
         timeoutForResource: TimeInterval = 60
@@ -306,6 +231,9 @@ enum NtfyURLSessionFactory {
         // us stuck in "Connecting…" forever while the network actually works.
         // Our own retry loop handles waiting and backoff.
         config.waitsForConnectivity = false
+        if let proxySettings = CFNetworkCopySystemProxySettings()?.takeRetainedValue() as? [AnyHashable: Any] {
+            config.connectionProxyDictionary = proxySettings
+        }
         config.httpAdditionalHeaders = ["User-Agent": "NtfyMac/1.0"]
         return URLSession(configuration: config)
     }
