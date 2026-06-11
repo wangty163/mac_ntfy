@@ -93,6 +93,28 @@ struct Subscription: Identifiable, Codable, Equatable, Hashable {
         guard var components = URLComponents(string: "\(normalizedBaseURL)/\(topic)/json") else {
             return nil
         }
+        components.queryItems = subscriptionQueryItems(forcePoll: forcePoll, includeCursor: includeCursor)
+        return components.url
+    }
+
+    /// Builds the WebSocket subscription URL with the same cursor + filters as
+    /// the JSON stream. WebSocket is the preferred live transport because proxy
+    /// tools such as Clash handle explicit Upgrade/CONNECT flows more reliably
+    /// than indefinite response-body HTTP streams.
+    func webSocketURL(includeCursor: Bool = true) -> URL? {
+        guard var components = URLComponents(string: "\(normalizedBaseURL)/\(topic)/ws") else {
+            return nil
+        }
+        switch components.scheme?.lowercased() {
+        case "https": components.scheme = "wss"
+        case "http": components.scheme = "ws"
+        default: break
+        }
+        components.queryItems = subscriptionQueryItems(forcePoll: false, includeCursor: includeCursor)
+        return components.url
+    }
+
+    private func subscriptionQueryItems(forcePoll: Bool, includeCursor: Bool) -> [URLQueryItem]? {
         var items: [URLQueryItem] = []
         if includeCursor, let lastMessageID {
             items.append(URLQueryItem(name: "since", value: lastMessageID))
@@ -113,8 +135,7 @@ struct Subscription: Identifiable, Codable, Equatable, Hashable {
         if forcePoll {
             items.append(URLQueryItem(name: "sched", value: "1"))
         }
-        if !items.isEmpty { components.queryItems = items }
-        return components.url
+        return items.isEmpty ? nil : items
     }
 }
 

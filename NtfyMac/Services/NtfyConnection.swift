@@ -116,18 +116,67 @@ final class NtfyConnection {
     }
 
     private func streamOnce() async throws {
-        guard let url = subscription.streamURL() else {
+        guard let webSocketURL = subscription.webSocketURL(),
+              let streamURL = subscription.streamURL() else {
             throw URLError(.badURL)
         }
 
         do {
-            try await stream(url: url)
+            try await webSocketStream(url: webSocketURL)
         } catch {
-            guard LocalHostsResolver.shouldRetryWithHostsMapping(for: url, error: error) else {
+            if let mappedURL = LocalHostsResolver.retryURL(for: webSocketURL, error: error) {
+                do {
+                    try await webSocketStream(url: mappedURL.url, hostHeader: mappedURL.hostHeader)
+                    return
+                } catch {
+                    if Task.isCancelled { throw error }
+                    // Fall through to the JSON stream transport below. A few
+                    // older/self-hosted ntfy deployments may not expose
+                    // WebSocket even though the HTTP JSON stream is available.
+                }
+            } else if Task.isCancelled {
                 throw error
             }
-            let mappedURL = LocalHostsResolver.mappedURL(for: url)
+        }
+
+        do {
+            try await stream(url: streamURL)
+        } catch {
+            guard let mappedURL = LocalHostsResolver.retryURL(for: streamURL, error: error) else {
+                throw error
+            }
             try await stream(url: mappedURL.url, hostHeader: mappedURL.hostHeader)
+        }
+    }
+
+    private func webSocketStream(url: URL, hostHeader: String? = nil) async throws {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 100
+        if let hostHeader {
+            request.setValue(hostHeader, forHTTPHeaderField: "Host")
+        }
+        if let auth = subscription.auth.authorizationHeader {
+            request.setValue(auth, forHTTPHeaderField: "Authorization")
+        }
+
+        let session = Self.makeSession()
+        defer { session.invalidateAndCancel() }
+
+        let task = session.webSocketTask(with: request)
+        defer { task.cancel(with: .goingAway, reason: nil) }
+        task.resume()
+
+        while !Task.isCancelled {
+            let message = try await task.receive()
+            switch message {
+            case let .string(text):
+                handle(line: text)
+            case let .data(data):
+                guard let text = String(data: data, encoding: .utf8) else { continue }
+                handle(line: text)
+            @unknown default:
+                break
+            }
         }
     }
 
@@ -230,6 +279,12 @@ enum LocalHostsResolver {
         var hostHeader: String?
     }
 
+    static func retryURL(for url: URL, error: Error) -> MappedURL? {
+        guard shouldRetryWithHostsMapping(for: url, error: error) else { return nil }
+        let mappedURL = mappedURL(for: url)
+        return mappedURL.hostHeader == nil ? nil : mappedURL
+    }
+
     static func shouldRetryWithHostsMapping(for url: URL, error: Error) -> Bool {
         guard let urlError = error as? URLError else { return false }
         switch urlError.code {
@@ -289,6 +344,8 @@ enum LocalHostsResolver {
     private static func isDefaultPort(_ port: Int, scheme: String?) -> Bool {
         (scheme?.lowercased() == "http" && port == 80)
             || (scheme?.lowercased() == "https" && port == 443)
+            || (scheme?.lowercased() == "ws" && port == 80)
+            || (scheme?.lowercased() == "wss" && port == 443)
     }
 
     private static func isIPAddress(_ host: String) -> Bool {
