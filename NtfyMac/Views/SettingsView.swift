@@ -47,7 +47,7 @@ struct SettingsView: View {
             aboutTab
                 .tabItem { Label("About", systemImage: "info.circle") }
         }
-        .frame(width: 460, height: 380)
+        .frame(width: 460, height: 440)
         .toggleStyle(.switch)
         .tint(Theme.settingsControlTint)
         .onAppear { SettingsWindow.focusSoon() }
@@ -62,6 +62,27 @@ struct SettingsView: View {
                 Toggle("Show window at launch", isOn: $settings.openWindowAtLaunch)
                 Toggle("Show unread badge in menu bar", isOn: $settings.showMenuBarCount)
             }
+            Section("Proxy") {
+                Picker("Connection", selection: $settings.proxyMode) {
+                    ForEach(ProxyMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .pickerStyle(.menu)
+                if settings.proxyMode == .custom {
+                    Picker("Protocol", selection: $settings.proxyType) {
+                        ForEach(ProxyType.allCases) { type in
+                            Text(type.label).tag(type)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    TextField("Host", text: $settings.proxyHost)
+                    TextField("Port", value: $settings.proxyPort,
+                              format: .number.grouping(.never))
+                }
+                Text(proxyFooter)
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("History") {
                 Stepper("Keep \(settings.historyLimitPerTopic) messages per topic",
                         value: $settings.historyLimitPerTopic, in: 20...2000, step: 20)
@@ -71,6 +92,17 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private var proxyFooter: String {
+        switch settings.proxyMode {
+        case .direct:
+            return "Connects directly, ignoring the macOS system proxy. Recommended when a tool like Clash or Surge manages the system proxy — long-lived notification streams often stall behind it even for DIRECT rules."
+        case .system:
+            return "Follows the macOS system proxy. Note: system-proxy tools may buffer or drop the long-lived notification stream; if topics show as offline, switch to Direct or a custom proxy."
+        case .custom:
+            return "Routes all ntfy traffic through this proxy explicitly. Use a proxy port that supports streaming (e.g. Clash's mixed/SOCKS5 port). Changes reconnect automatically."
+        }
     }
 
     private var notificationsTab: some View {

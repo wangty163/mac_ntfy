@@ -24,6 +24,7 @@ final class SubscriptionManager: ObservableObject {
 
     private let pathMonitor = NWPathMonitor()
     private let monitorQueue = DispatchQueue(label: "com.ntfymac.network-monitor")
+    private var cancellables = Set<AnyCancellable>()
     private var hasNetwork = true
     /// Which interfaces the current path uses (e.g. ["en0"]). Switching Wi-Fi
     /// networks or hopping between Wi-Fi/Ethernet/VPN keeps the path
@@ -276,6 +277,16 @@ final class SubscriptionManager: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor [weak self] in self?.reconnectAll() }
         }
+
+        // Proxy settings changed: tear down the streams so they come back up
+        // with the new session configuration. Debounced because typing a host
+        // or port fires once per keystroke.
+        NotificationCenter.default.publisher(for: .ntfyProxyConfigChanged)
+            .debounce(for: .seconds(1), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in self?.reconnectAll() }
+            }
+            .store(in: &cancellables)
     }
 
     // MARK: - Persistence

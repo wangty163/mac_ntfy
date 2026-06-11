@@ -47,6 +47,10 @@ final class NtfyConnection {
         // Our own retry loop handles waiting and backoff.
         config.waitsForConnectivity = false
         config.httpAdditionalHeaders = ["User-Agent": "NtfyMac/1.0"]
+        // Explicit proxy mode instead of system-proxy auto-detection; tools
+        // like Clash in system-proxy mode break long-lived streams even when
+        // their own rules say DIRECT. See ProxyConfig.
+        ProxyConfig.current().apply(to: config)
         return URLSession(configuration: config)
     }
 
