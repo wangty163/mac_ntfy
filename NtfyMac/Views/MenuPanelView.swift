@@ -255,7 +255,7 @@ struct MenuMessageRow: View {
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
                     Spacer(minLength: 4)
-                    RelativeTimeText(date: stored.message.date)
+                    TimestampText(date: stored.message.date)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .fixedSize()

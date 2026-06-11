@@ -49,7 +49,7 @@ struct MessageDetailView: View {
                      systemImage: message.resolvedPriority.symbol,
                      tint: message.resolvedPriority.tint)
                 Spacer()
-                Text(message.date, format: .dateTime.month().day().hour().minute())
+                TimestampText(date: message.date)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -200,7 +200,7 @@ struct MessageDetailView: View {
                 }
                 .font(.caption)
             }
-            metaRow("Received", message.date.formatted(date: .abbreviated, time: .standard))
+            metaRow("Received", AppDateFormat.fullTimestamp(message.date))
         }
         .font(.caption)
     }
