@@ -8,6 +8,42 @@
 import Foundation
 import Combine
 
+enum NetworkProxyMode: String, CaseIterable, Identifiable {
+    case system
+    case manualHTTP
+    case direct
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .system: return "Use macOS system proxy"
+        case .manualHTTP: return "Manual HTTP proxy"
+        case .direct: return "Direct connection"
+        }
+    }
+
+    var helpText: String {
+        switch self {
+        case .system:
+            return "Use the proxy configured in macOS/Clash Verge system settings."
+        case .manualHTTP:
+            return "Send ntfy HTTP streaming, publish, and test requests through the specified HTTP CONNECT proxy."
+        case .direct:
+            return "Bypass proxies for ntfy traffic."
+        }
+    }
+}
+
+enum NetworkProxyDefaults {
+    static let modeKey = "networkProxyMode"
+    static let hostKey = "networkProxyHost"
+    static let portKey = "networkProxyPort"
+    static let defaultMode = NetworkProxyMode.system
+    static let defaultHost = "127.0.0.1"
+    static let defaultPort = 7890
+}
+
 @MainActor
 final class AppSettings: ObservableObject {
     private enum Keys {
@@ -19,6 +55,9 @@ final class AppSettings: ObservableObject {
         static let launchAtLogin = "launchAtLogin"
         static let showMenuBarCount = "showMenuBarCount"
         static let openWindowAtLaunch = "openWindowAtLaunch"
+        static let networkProxyMode = NetworkProxyDefaults.modeKey
+        static let networkProxyHost = NetworkProxyDefaults.hostKey
+        static let networkProxyPort = NetworkProxyDefaults.portKey
     }
 
     @Published var defaultServer: String {
@@ -51,6 +90,15 @@ final class AppSettings: ObservableObject {
             LaunchAtLogin.setEnabled(launchAtLogin)
         }
     }
+    @Published var networkProxyMode: NetworkProxyMode {
+        didSet { defaults.set(networkProxyMode.rawValue, forKey: Keys.networkProxyMode) }
+    }
+    @Published var networkProxyHost: String {
+        didSet { defaults.set(networkProxyHost, forKey: Keys.networkProxyHost) }
+    }
+    @Published var networkProxyPort: Int {
+        didSet { defaults.set(networkProxyPort, forKey: Keys.networkProxyPort) }
+    }
 
     private let defaults: UserDefaults
 
@@ -64,6 +112,9 @@ final class AppSettings: ObservableObject {
             Keys.historyLimit: 200,
             Keys.showMenuBarCount: true,
             Keys.openWindowAtLaunch: true,
+            Keys.networkProxyMode: NetworkProxyDefaults.defaultMode.rawValue,
+            Keys.networkProxyHost: NetworkProxyDefaults.defaultHost,
+            Keys.networkProxyPort: NetworkProxyDefaults.defaultPort,
         ])
         defaultServer = defaults.string(forKey: Keys.defaultServer) ?? "https://ntfy.sh"
         showNotifications = defaults.bool(forKey: Keys.showNotifications)
@@ -73,5 +124,15 @@ final class AppSettings: ObservableObject {
         showMenuBarCount = defaults.bool(forKey: Keys.showMenuBarCount)
         openWindowAtLaunch = defaults.bool(forKey: Keys.openWindowAtLaunch)
         launchAtLogin = LaunchAtLogin.isEnabled
+        let proxyModeRaw = defaults.string(forKey: Keys.networkProxyMode)
+            ?? NetworkProxyDefaults.defaultMode.rawValue
+        networkProxyMode = NetworkProxyMode(rawValue: proxyModeRaw)
+            ?? NetworkProxyDefaults.defaultMode
+        networkProxyHost = defaults.string(forKey: Keys.networkProxyHost)
+            ?? NetworkProxyDefaults.defaultHost
+        let storedProxyPort = defaults.integer(forKey: Keys.networkProxyPort)
+        networkProxyPort = storedProxyPort > 0
+            ? storedProxyPort
+            : NetworkProxyDefaults.defaultPort
     }
 }

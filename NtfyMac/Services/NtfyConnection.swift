@@ -3,12 +3,13 @@
 //  NtfyMac
 //
 //  Maintains one long-lived streaming connection to an ntfy topic's
-//  `/<topic>/json` endpoint. The server emits newline-delimited JSON; we read
-//  it line-by-line and reconnect automatically with exponential backoff so the
-//  subscription survives network drops, server restarts and system sleep.
+//  `/<topic>/json` endpoint. The stream is allowed to travel through the macOS
+//  system proxy (for tools such as Clash Verge), while an idle watchdog and the
+//  reconnect loop recover from proxy/network resets and silent stalls.
 //
 
 import Foundation
+import CFNetwork
 
 @MainActor
 final class NtfyConnection {
@@ -32,22 +33,13 @@ final class NtfyConnection {
     }
 
     /// A fresh session per connection attempt. Reusing one session across
-    /// reconnects can hand us a half-dead pooled connection after a network
+    /// reconnects can hand us a half-dead pooled connection after a Clash/network
     /// change, which then stalls until it times out.
     private static func makeSession() -> URLSession {
-        let config = URLSessionConfiguration.ephemeral
-        // ntfy sends a keepalive roughly every 45s; if we miss two in a row the
-        // connection is dead — fail the request so the loop reconnects, instead
-        // of stalling for minutes on a silently broken socket.
-        config.timeoutIntervalForRequest = 100
-        config.timeoutIntervalForResource = .infinity
-        // Never let URLSession park the request waiting for connectivity: its
-        // connectivity assessment can be wrong (VPN/Wi-Fi transitions), leaving
-        // us stuck in "Connecting…" forever while the network actually works.
-        // Our own retry loop handles waiting and backoff.
-        config.waitsForConnectivity = false
-        config.httpAdditionalHeaders = ["User-Agent": "NtfyMac/1.0"]
-        return URLSession(configuration: config)
+        NtfyURLSessionFactory.makeSession(
+            timeoutForRequest: 100,
+            timeoutForResource: .infinity
+        )
     }
 
     func updateSubscription(_ sub: Subscription) {
@@ -145,6 +137,7 @@ final class NtfyConnection {
     private func stream(url: URL, hostHeader: String? = nil) async throws {
         var request = URLRequest(url: url)
         request.timeoutInterval = 100
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
         if let hostHeader {
             request.setValue(hostHeader, forHTTPHeaderField: "Host")
         }
@@ -153,28 +146,47 @@ final class NtfyConnection {
         }
 
         let session = Self.makeSession()
-        defer { session.invalidateAndCancel() }
-
-        let (bytes, response) = try await session.bytes(for: request)
-
-        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-            switch http.statusCode {
-            case 400 where subscription.lastMessageID != nil:
-                throw NtfyError.staleCursor
-            case 401, 403:
-                throw NtfyError.unauthorized("Authentication failed (\(http.statusCode))")
-            case 404:
-                throw NtfyError.http("Topic or server not found (404)")
-            case 429:
-                throw NtfyError.http("Rate limited (429)")
-            default:
-                throw NtfyError.http("Server returned HTTP \(http.statusCode)")
+        var lastActivity = Date()
+        let watchdog = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+                guard !Task.isCancelled else { return }
+                if Date().timeIntervalSince(lastActivity) > 110 {
+                    session.invalidateAndCancel()
+                    return
+                }
             }
         }
+        defer {
+            watchdog.cancel()
+            session.invalidateAndCancel()
+        }
+
+        let (bytes, response) = try await session.bytes(for: request)
+        try validateHTTPResponse(response)
 
         for try await line in bytes.lines {
             if Task.isCancelled { break }
+            lastActivity = Date()
             handle(line: line)
+        }
+    }
+
+    private func validateHTTPResponse(_ response: URLResponse) throws {
+        guard let http = response as? HTTPURLResponse else { return }
+        guard !(200...299).contains(http.statusCode) else { return }
+
+        switch http.statusCode {
+        case 400 where subscription.lastMessageID != nil:
+            throw NtfyError.staleCursor
+        case 401, 403:
+            throw NtfyError.unauthorized("Authentication failed (\(http.statusCode))")
+        case 404:
+            throw NtfyError.http("Topic or server not found (404)")
+        case 429:
+            throw NtfyError.http("Rate limited (429)")
+        default:
+            throw NtfyError.http("Server returned HTTP \(http.statusCode)")
         }
     }
 
@@ -200,6 +212,59 @@ final class NtfyConnection {
     private func setState(_ newState: ConnectionState) {
         state = newState
         onStateChange?(newState)
+    }
+}
+
+
+/// Builds URLSession instances for ntfy server traffic. The user can choose
+/// between macOS proxy settings, an explicit HTTP CONNECT proxy (recommended
+/// for Clash Verge mixed/HTTP ports), or direct traffic.
+enum NtfyURLSessionFactory {
+    static func makeSession(
+        timeoutForRequest: TimeInterval,
+        timeoutForResource: TimeInterval = 60
+    ) -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = timeoutForRequest
+        config.timeoutIntervalForResource = timeoutForResource
+        // Never let URLSession park the request waiting for connectivity: its
+        // connectivity assessment can be wrong (VPN/Wi-Fi transitions), leaving
+        // us stuck in "Connecting…" forever while the network actually works.
+        // Our own retry loop handles waiting and backoff.
+        config.waitsForConnectivity = false
+        config.connectionProxyDictionary = proxyDictionary()
+        config.httpAdditionalHeaders = ["User-Agent": "NtfyMac/1.0"]
+        return URLSession(configuration: config)
+    }
+
+    private static func proxyDictionary() -> [AnyHashable: Any] {
+        let defaults = UserDefaults.standard
+        let rawMode = defaults.string(forKey: NetworkProxyDefaults.modeKey)
+            ?? NetworkProxyDefaults.defaultMode.rawValue
+        let mode = NetworkProxyMode(rawValue: rawMode) ?? NetworkProxyDefaults.defaultMode
+
+        switch mode {
+        case .system:
+            return (CFNetworkCopySystemProxySettings()?.takeRetainedValue() as? [AnyHashable: Any]) ?? [:]
+        case .manualHTTP:
+            let host = (defaults.string(forKey: NetworkProxyDefaults.hostKey)
+                ?? NetworkProxyDefaults.defaultHost)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let storedPort = defaults.integer(forKey: NetworkProxyDefaults.portKey)
+            let port = storedPort > 0 ? storedPort : NetworkProxyDefaults.defaultPort
+            guard !host.isEmpty else { return [:] }
+
+            return [
+                kCFNetworkProxiesHTTPEnable as String: true,
+                kCFNetworkProxiesHTTPProxy as String: host,
+                kCFNetworkProxiesHTTPPort as String: port,
+                kCFNetworkProxiesHTTPSEnable as String: true,
+                kCFNetworkProxiesHTTPSProxy as String: host,
+                kCFNetworkProxiesHTTPSPort as String: port,
+            ]
+        case .direct:
+            return [:]
+        }
     }
 }
 

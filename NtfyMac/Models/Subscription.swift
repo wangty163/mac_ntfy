@@ -88,9 +88,17 @@ struct Subscription: Identifiable, Codable, Equatable, Hashable {
         Color(hex: accentHex) ?? .accentColor
     }
 
-    /// Builds the JSON subscription URL with cursor + filters applied.
+    /// Builds the JSON HTTP subscription URL with cursor + filters applied.
     func streamURL(forcePoll: Bool = false, includeCursor: Bool = true) -> URL? {
-        guard var components = URLComponents(string: "\(normalizedBaseURL)/\(topic)/json") else {
+        subscriptionURL(endpoint: "json", forcePoll: forcePoll, includeCursor: includeCursor)
+    }
+
+    private func subscriptionURL(
+        endpoint: String,
+        forcePoll: Bool = false,
+        includeCursor: Bool = true
+    ) -> URL? {
+        guard var components = URLComponents(string: "\(normalizedBaseURL)/\(topic)/\(endpoint)") else {
             return nil
         }
         var items: [URLQueryItem] = []

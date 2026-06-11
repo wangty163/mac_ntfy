@@ -36,6 +36,7 @@ extension Color {
 
 enum Theme {
     static let cornerRadius: CGFloat = 12
+    static let settingsControlTint = Color(hex: "#3B82F6")!
     static let accentPalette: [String] = [
         "#3B82F6", "#8B5CF6", "#EC4899", "#F97316",
         "#10B981", "#14B8A6", "#EF4444", "#F59E0B",
@@ -115,55 +116,28 @@ struct StatusDot: View {
     }
 }
 
-/// A shared ticking clock that periodically publishes the current time so that
-/// relative-time labels across the UI can refresh in lockstep.
-///
-/// A single timer drives every label, which is cheaper than one timer per row
-/// and—unlike `TimelineView(.periodic(from:by:))`, which can quietly stop
-/// firing on macOS when a window is occluded or App Nap kicks in—reliably keeps
-/// updating as long as the app's run loop is alive.
-@MainActor
-final class RelativeClock: ObservableObject {
-    static let shared = RelativeClock()
-
-    @Published private(set) var now = Date()
-
-    private var timer: Timer?
-
-    private init() {
-        // 1s cadence: newly-arrived notifications render as "x seconds ago", so
-        // the list needs second-level refreshes while those messages are fresh.
-        // A single shared timer keeps this inexpensive even with many rows.
-        let timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            Task { @MainActor in self.now = Date() }
-        }
-        // Keep ticking while the user interacts with menus/scrolls.
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
-    }
-}
-
-/// A relative timestamp ("2 minutes ago") that refreshes itself over time.
-///
-/// Note we render a plain `String`, not `Text(date, format: .relative(...))`.
-/// A format-style `Text` keeps the same `date`/format identity on every render,
-/// so SwiftUI diffs it as unchanged and caches the formatted output — the label
-/// would freeze even though `body` re-runs. Computing the string ourselves
-/// against the shared `RelativeClock`'s ticking `now` yields a value that
-/// actually changes over time, so the view updates.
-struct RelativeTimeText: View {
-    let date: Date
-    @ObservedObject private var clock = RelativeClock.shared
-
-    private static let formatter: RelativeDateTimeFormatter = {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .full
-        formatter.dateTimeStyle = .numeric
+/// Shared absolute date/time formatting for message timestamps. Keep every
+/// visible date that includes calendar and time components in the same
+/// `yyyy-MM-dd HH:mm:ss` shape, e.g. `2024-02-01 12:00:00`.
+enum AppDateFormat {
+    private static let fullTimestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
         return formatter
     }()
 
+    static func fullTimestamp(_ date: Date) -> String {
+        fullTimestampFormatter.string(from: date)
+    }
+}
+
+/// An absolute timestamp label used instead of relative intervals so message
+/// rows and quick previews show the actual message time.
+struct TimestampText: View {
+    let date: Date
+
     var body: some View {
-        Text(Self.formatter.localizedString(for: date, relativeTo: clock.now))
+        Text(AppDateFormat.fullTimestamp(date))
     }
 }

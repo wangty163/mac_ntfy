@@ -47,9 +47,14 @@ struct SettingsView: View {
             aboutTab
                 .tabItem { Label("About", systemImage: "info.circle") }
         }
-        .frame(width: 460, height: 380)
-        .onAppear { AppActivation.enterWindowMode() }
+        .frame(width: 500, height: 460)
+        .toggleStyle(.switch)
+        .tint(Theme.settingsControlTint)
+        .onAppear { SettingsWindow.focusSoon() }
         .onDisappear { AppActivation.exitWindowModeIfNeeded() }
+        .onChange(of: settings.networkProxyMode) { _ in manager.reconnectAll() }
+        .onChange(of: settings.networkProxyHost) { _ in manager.reconnectAll() }
+        .onChange(of: settings.networkProxyPort) { _ in manager.reconnectAll() }
     }
 
     private var generalTab: some View {
@@ -60,6 +65,8 @@ struct SettingsView: View {
                 Toggle("Show window at launch", isOn: $settings.openWindowAtLaunch)
                 Toggle("Show unread badge in menu bar", isOn: $settings.showMenuBarCount)
             }
+            networkProxySection
+
             Section("History") {
                 Stepper("Keep \(settings.historyLimitPerTopic) messages per topic",
                         value: $settings.historyLimitPerTopic, in: 20...2000, step: 20)
@@ -69,6 +76,31 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+
+    private var networkProxySection: some View {
+        Section("Network Proxy") {
+            Picker("Proxy mode", selection: $settings.networkProxyMode) {
+                ForEach(NetworkProxyMode.allCases) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+            .pickerStyle(.menu)
+
+            Text(settings.networkProxyMode.helpText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if settings.networkProxyMode == .manualHTTP {
+                TextField("Proxy host", text: $settings.networkProxyHost)
+                Stepper("Proxy port: \(settings.networkProxyPort)",
+                        value: $settings.networkProxyPort, in: 1...65535)
+                Text("For Clash Verge, use the HTTP/mixed port shown in Clash settings, for example 127.0.0.1:7890. This explicitly supports HTTP streaming through that proxy instead of relying only on system proxy auto-detection.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     private var notificationsTab: some View {
