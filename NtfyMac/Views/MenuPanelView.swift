@@ -175,21 +175,16 @@ struct MenuPanelView: View {
         .padding(12)
     }
 
-    /// Opens Settings reliably: the official `openSettings` action on macOS 14+,
-    /// falling back to the responder-chain selector on macOS 13.
-    @ViewBuilder
+    /// Opens the dedicated settings window and immediately promotes it above
+    /// the menu-bar panel. Using an addressable `Window` avoids the `Settings`
+    /// scene being created but left inactive behind the panel.
     private var settingsButton: some View {
-        if #available(macOS 14.0, *) {
-            ModernSettingsButton()
-        } else {
-            Button {
-                AppActivation.enterWindowMode()
-                if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
-                    NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-                }
-            } label: {
-                Image(systemName: "gearshape")
-            }
+        Button {
+            SettingsWindow.prepareToOpen()
+            openWindow(id: "settings")
+            SettingsWindow.focusSoon()
+        } label: {
+            Image(systemName: "gearshape")
         }
     }
 
@@ -241,18 +236,6 @@ private struct MenuPanelWindowResizer: NSViewRepresentable {
     }
 }
 
-/// Settings button for macOS 14+, using the official `SettingsLink`, which
-/// opens the `Settings` scene reliably. Focus is handled by `SettingsView`'s
-/// `onAppear` (which promotes the app to a regular, front window).
-@available(macOS 14.0, *)
-private struct ModernSettingsButton: View {
-    var body: some View {
-        SettingsLink {
-            Image(systemName: "gearshape")
-        }
-    }
-}
-
 struct MenuMessageRow: View {
     let stored: StoredMessage
     let subscription: Subscription?
@@ -272,7 +255,7 @@ struct MenuMessageRow: View {
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
                     Spacer(minLength: 4)
-                    RelativeTimeText(date: stored.message.date)
+                    TimestampText(date: stored.message.date)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .fixedSize()

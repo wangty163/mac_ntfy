@@ -35,19 +35,10 @@ final class NtfyConnection {
     /// reconnects can hand us a half-dead pooled connection after a network
     /// change, which then stalls until it times out.
     private static func makeSession() -> URLSession {
-        let config = URLSessionConfiguration.ephemeral
-        // ntfy sends a keepalive roughly every 45s; if we miss two in a row the
-        // connection is dead — fail the request so the loop reconnects, instead
-        // of stalling for minutes on a silently broken socket.
-        config.timeoutIntervalForRequest = 100
-        config.timeoutIntervalForResource = .infinity
-        // Never let URLSession park the request waiting for connectivity: its
-        // connectivity assessment can be wrong (VPN/Wi-Fi transitions), leaving
-        // us stuck in "Connecting…" forever while the network actually works.
-        // Our own retry loop handles waiting and backoff.
-        config.waitsForConnectivity = false
-        config.httpAdditionalHeaders = ["User-Agent": "NtfyMac/1.0"]
-        return URLSession(configuration: config)
+        NtfyURLSessionFactory.makeSession(
+            timeoutForRequest: 100,
+            timeoutForResource: .infinity
+        )
     }
 
     func updateSubscription(_ sub: Subscription) {
@@ -127,10 +118,24 @@ final class NtfyConnection {
     }
 
     private func streamOnce() async throws {
-        guard let url = subscription.streamURL() else {
+        guard let wsURL = subscription.webSocketURL(),
+              let httpURL = subscription.streamURL() else {
             throw URLError(.badURL)
         }
 
+        do {
+            try await streamWebSocket(url: wsURL)
+        } catch {
+            if Task.isCancelled { throw error }
+            // If a self-hosted server or proxy does not support WebSockets, fall
+            // back to the original HTTP JSON stream. Both paths use the system
+            // proxy, but WebSockets are preferred because proxies handle them as
+            // upgrade tunnels instead of buffered HTTP responses.
+            try await streamHTTPOnce(url: httpURL)
+        }
+    }
+
+    private func streamHTTPOnce(url: URL) async throws {
         do {
             try await stream(url: url)
         } catch {
@@ -178,6 +183,38 @@ final class NtfyConnection {
         }
     }
 
+
+    private func streamWebSocket(url: URL) async throws {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 100
+        if let auth = subscription.auth.authorizationHeader {
+            request.setValue(auth, forHTTPHeaderField: "Authorization")
+        }
+        request.setValue("NtfyMac/1.0", forHTTPHeaderField: "User-Agent")
+
+        let session = Self.makeSession()
+        let task = session.webSocketTask(with: request)
+        task.resume()
+        defer {
+            task.cancel(with: .goingAway, reason: nil)
+            session.invalidateAndCancel()
+        }
+
+        while !Task.isCancelled {
+            let message = try await task.receive()
+            switch message {
+            case let .string(text):
+                handle(line: text)
+            case let .data(data):
+                if let text = String(data: data, encoding: .utf8) {
+                    handle(line: text)
+                }
+            @unknown default:
+                break
+            }
+        }
+    }
+
     private func handle(line: String) {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, let data = trimmed.data(using: .utf8) else { return }
@@ -200,6 +237,28 @@ final class NtfyConnection {
     private func setState(_ newState: ConnectionState) {
         state = newState
         onStateChange?(newState)
+    }
+}
+
+
+/// Builds URLSession instances for ntfy server traffic. These sessions keep
+/// macOS's system proxy settings enabled so users can route ntfy through Clash
+/// Verge or another proxy, while still using bounded connectivity behavior.
+enum NtfyURLSessionFactory {
+    static func makeSession(
+        timeoutForRequest: TimeInterval,
+        timeoutForResource: TimeInterval = 60
+    ) -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = timeoutForRequest
+        config.timeoutIntervalForResource = timeoutForResource
+        // Never let URLSession park the request waiting for connectivity: its
+        // connectivity assessment can be wrong (VPN/Wi-Fi transitions), leaving
+        // us stuck in "Connecting…" forever while the network actually works.
+        // Our own retry loop handles waiting and backoff.
+        config.waitsForConnectivity = false
+        config.httpAdditionalHeaders = ["User-Agent": "NtfyMac/1.0"]
+        return URLSession(configuration: config)
     }
 }
 
