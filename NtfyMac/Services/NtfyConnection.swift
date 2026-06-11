@@ -9,6 +9,7 @@
 //
 
 import Foundation
+import CFNetwork
 
 @MainActor
 final class NtfyConnection {
@@ -35,19 +36,7 @@ final class NtfyConnection {
     /// reconnects can hand us a half-dead pooled connection after a network
     /// change, which then stalls until it times out.
     private static func makeSession() -> URLSession {
-        let config = URLSessionConfiguration.ephemeral
-        // ntfy sends a keepalive roughly every 45s; if we miss two in a row the
-        // connection is dead — fail the request so the loop reconnects, instead
-        // of stalling for minutes on a silently broken socket.
-        config.timeoutIntervalForRequest = 100
-        config.timeoutIntervalForResource = .infinity
-        // Never let URLSession park the request waiting for connectivity: its
-        // connectivity assessment can be wrong (VPN/Wi-Fi transitions), leaving
-        // us stuck in "Connecting…" forever while the network actually works.
-        // Our own retry loop handles waiting and backoff.
-        config.waitsForConnectivity = false
-        config.httpAdditionalHeaders = ["User-Agent": "NtfyMac/1.0"]
-        return URLSession(configuration: config)
+        NtfyURLSessionFactory.makeStreamingSession()
     }
 
     func updateSubscription(_ sub: Subscription) {
@@ -313,5 +302,135 @@ enum LocalHostsResolver {
             guard let value = Int(part), value >= 0, value <= 255 else { return false }
             return String(value) == part || part == "0"
         }
+    }
+}
+
+/// Creates URLSession instances with explicit proxy settings for ntfy traffic.
+///
+/// Long-lived ntfy subscriptions are HTTP streams. When tools such as Clash
+/// Verge enable the macOS system HTTP proxy, relying on URLSession's implicit
+/// proxy discovery can be brittle for those streams: the short test request may
+/// work while the streaming request never reaches the proxy path that supports
+/// CONNECT/streaming correctly. Copy the active macOS proxy settings into each
+/// fresh session so HTTP, HTTPS and SOCKS proxies are applied deliberately.
+enum NtfyURLSessionFactory {
+    static let userAgent = "NtfyMac/1.0"
+
+    static func makeStreamingSession() -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        // ntfy sends a keepalive roughly every 45s; if we miss two in a row the
+        // connection is dead — fail the request so the loop reconnects, instead
+        // of stalling for minutes on a silently broken socket.
+        config.timeoutIntervalForRequest = 100
+        config.timeoutIntervalForResource = .infinity
+        // Never let URLSession park the request waiting for connectivity: its
+        // connectivity assessment can be wrong (VPN/Wi-Fi transitions), leaving
+        // us stuck in "Connecting…" forever while the network actually works.
+        // Our own retry loop handles waiting and backoff.
+        config.waitsForConnectivity = false
+        config.httpAdditionalHeaders = ["User-Agent": userAgent]
+        config.connectionProxyDictionary = explicitProxyDictionary()
+        return URLSession(configuration: config)
+    }
+
+    static func makeDataSession(timeout: TimeInterval = 60) -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = timeout
+        config.timeoutIntervalForResource = timeout
+        config.waitsForConnectivity = false
+        config.httpAdditionalHeaders = ["User-Agent": userAgent]
+        config.connectionProxyDictionary = explicitProxyDictionary()
+        return URLSession(configuration: config)
+    }
+
+    private static func explicitProxyDictionary() -> [AnyHashable: Any]? {
+        guard let unmanagedSettings = CFNetworkCopySystemProxySettings() else {
+            return nil
+        }
+        let settingsDictionary = unmanagedSettings.takeRetainedValue() as NSDictionary
+        guard let systemSettings = settingsDictionary as? [String: Any] else {
+            return nil
+        }
+
+        var proxy: [String: Any] = [:]
+        copyProxy(
+            from: systemSettings,
+            to: &proxy,
+            enable: kCFNetworkProxiesHTTPEnable,
+            host: kCFNetworkProxiesHTTPProxy,
+            port: kCFNetworkProxiesHTTPPort
+        )
+        copyProxy(
+            from: systemSettings,
+            to: &proxy,
+            enable: kCFNetworkProxiesHTTPSEnable,
+            host: kCFNetworkProxiesHTTPSProxy,
+            port: kCFNetworkProxiesHTTPSPort
+        )
+        copyProxy(
+            from: systemSettings,
+            to: &proxy,
+            enable: kCFNetworkProxiesSOCKSEnable,
+            host: kCFNetworkProxiesSOCKSProxy,
+            port: kCFNetworkProxiesSOCKSPort
+        )
+        copyValue(from: systemSettings, to: &proxy, key: kCFNetworkProxiesExceptionsList)
+        copyValue(from: systemSettings, to: &proxy, key: kCFNetworkProxiesExcludeSimpleHostnames)
+
+        // Some proxy apps expose a single HTTP proxy port and expect HTTPS to
+        // use the same endpoint with CONNECT. Make that mapping explicit for
+        // URLSession instead of leaving HTTPS streams to auto-detection.
+        if proxy[kCFNetworkProxiesHTTPEnable as String] as? Int == 1,
+           proxy[kCFNetworkProxiesHTTPSEnable as String] == nil,
+           let httpHost = proxy[kCFNetworkProxiesHTTPProxy as String],
+           let httpPort = proxy[kCFNetworkProxiesHTTPPort as String] {
+            proxy[kCFNetworkProxiesHTTPSEnable as String] = 1
+            proxy[kCFNetworkProxiesHTTPSProxy as String] = httpHost
+            proxy[kCFNetworkProxiesHTTPSPort as String] = httpPort
+        }
+
+        if !proxy.isEmpty {
+            return anyHashableDictionary(proxy)
+        }
+
+        // Fall back to the full system dictionary for PAC/WPAD-only setups.
+        return systemSettings.isEmpty ? nil : anyHashableDictionary(systemSettings)
+    }
+
+    private static func copyProxy(
+        from source: [String: Any],
+        to destination: inout [String: Any],
+        enable: CFString,
+        host: CFString,
+        port: CFString
+    ) {
+        let enableKey = enable as String
+        let hostKey = host as String
+        let portKey = port as String
+        guard intValue(source[enableKey]) == 1,
+              let proxyHost = source[hostKey],
+              let proxyPort = source[portKey]
+        else { return }
+
+        destination[enableKey] = 1
+        destination[hostKey] = proxyHost
+        destination[portKey] = proxyPort
+    }
+
+    private static func copyValue(from source: [String: Any], to destination: inout [String: Any], key: CFString) {
+        let stringKey = key as String
+        if let value = source[stringKey] {
+            destination[stringKey] = value
+        }
+    }
+
+    private static func anyHashableDictionary(_ dictionary: [String: Any]) -> [AnyHashable: Any] {
+        Dictionary(uniqueKeysWithValues: dictionary.map { (AnyHashable($0.key), $0.value) })
+    }
+
+    private static func intValue(_ value: Any?) -> Int? {
+        if let int = value as? Int { return int }
+        if let number = value as? NSNumber { return number.intValue }
+        return nil
     }
 }

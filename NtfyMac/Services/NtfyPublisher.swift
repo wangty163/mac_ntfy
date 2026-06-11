@@ -122,7 +122,10 @@ enum NtfyPublisher {
         }
         request.httpBody = body
 
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let session = NtfyURLSessionFactory.makeDataSession()
+        defer { session.invalidateAndCancel() }
+
+        let (_, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
             throw NtfyError.http("Publish failed (HTTP \(code))")
@@ -142,7 +145,10 @@ enum NtfyPublisher {
         if let auth = subscription.auth.authorizationHeader {
             request.setValue(auth, forHTTPHeaderField: "Authorization")
         }
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let session = NtfyURLSessionFactory.makeDataSession(timeout: 15)
+        defer { session.invalidateAndCancel() }
+
+        let (_, response) = try await session.data(for: request)
         return response
     }
 }

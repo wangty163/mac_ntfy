@@ -49,7 +49,10 @@ enum ActionRunner {
         if let body = action.body { request.httpBody = Data(body.utf8) }
 
         do {
-            let (_, response) = try await URLSession.shared.data(for: request)
+            let session = NtfyURLSessionFactory.makeDataSession()
+            defer { session.invalidateAndCancel() }
+
+            let (_, response) = try await session.data(for: request)
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
             if (200...299).contains(code) {
                 return .httpSucceeded(code)
