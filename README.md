@@ -8,6 +8,8 @@ Subscribe to any ntfy topic — on `ntfy.sh` or your own self-hosted server — 
 get rich native macOS notifications the moment a message arrives. Runs quietly
 in the background and reconnects automatically.
 
+📖 中文使用说明与注意事项：[**docs/使用说明.md**](docs/使用说明.md)
+
 </div>
 
 ---
@@ -111,6 +113,9 @@ messages can appear as banners.
    ```
 
    …or use the in-app **Publish** button (paper-plane icon).
+
+> 中文用户可参阅 [**docs/使用说明.md**](docs/使用说明.md)，内含按「核心流程 →
+> 进阶功能 → 注意事项」分级整理的完整指南。
 
 ## 🛠 Troubleshooting notes
 
