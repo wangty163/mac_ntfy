@@ -17,6 +17,22 @@ final class SubscriptionManager: ObservableObject {
     @Published private(set) var subscriptions: [Subscription] = []
     @Published private(set) var messages: [StoredMessage] = []
     @Published private(set) var states: [UUID: ConnectionState] = [:]
+    /// Subscriptions that are currently not connected (offline or stuck
+    /// reconnecting). Drives the menu-bar trouble indicator. Sticky across a
+    /// reconnect attempt so the brief `.connecting` phase doesn't clear it.
+    @Published private(set) var offlineSubscriptionIDs: Set<UUID> = []
+    /// Pending grace-period tasks for the offline notification, keyed by
+    /// subscription, so a quick reconnect can cancel the alert before it fires.
+    private var dropNotifyTasks: [UUID: Task<Void, Never>] = [:]
+    /// Subscriptions that have connected at least once since their current
+    /// endpoint was set. Used to distinguish a real outage (was working, now
+    /// down) from one that never managed to connect, so we only alert on the
+    /// former.
+    private var everConnectedIDs: Set<UUID> = []
+    /// Subscriptions for which an offline notification was actually delivered, so
+    /// that a matching "back online" notification is posted only after a real,
+    /// announced outage (not after a brief blip that was never announced).
+    private var notifiedOfflineIDs: Set<UUID> = []
 
     private let settings: AppSettings
     private let store = PersistenceStore.shared
@@ -31,6 +47,11 @@ final class SubscriptionManager: ObservableObject {
     /// "satisfied" but silently kills established streams, so we track the
     /// interface set and reconnect when it changes.
     private var pathInterfaces: Set<String>?
+    /// Watches `/etc/hosts` so that editing the file (e.g. pointing a hostname
+    /// at a new IP after the server moved) reconnects the running app on its
+    /// own, without a quit/relaunch.
+    private var hostsWatcher: HostsFileWatcher?
+    private let hostsChanged = PassthroughSubject<Void, Never>()
 
     init(settings: AppSettings) {
         self.settings = settings
@@ -80,6 +101,13 @@ final class SubscriptionManager: ObservableObject {
         states.values.contains { $0.isConnected }
     }
 
+    /// True when at least one (non-muted) subscription is offline — used to badge
+    /// the menu-bar icon so a dropped connection is visible without opening a
+    /// window.
+    var hasOfflineSubscriptions: Bool {
+        !offlineSubscriptionIDs.isEmpty
+    }
+
     func subscription(id: UUID) -> Subscription? {
         subscriptions.first { $0.id == id }
     }
@@ -99,7 +127,13 @@ final class SubscriptionManager: ObservableObject {
 
         // A different topic/server invalidates the `since` cursor.
         let endpointChanged = old.normalizedBaseURL != sub.normalizedBaseURL || old.topic != sub.topic
-        if endpointChanged { sub.lastMessageID = nil }
+        if endpointChanged {
+            sub.lastMessageID = nil
+            // The new endpoint must connect once before a drop counts as an
+            // outage, so it isn't immediately reported offline if unreachable.
+            everConnectedIDs.remove(sub.id)
+            notifiedOfflineIDs.remove(sub.id)
+        }
 
         subscriptions[idx] = sub
         persistSubscriptions()
@@ -120,6 +154,10 @@ final class SubscriptionManager: ObservableObject {
         connections[id]?.stop()
         connections[id] = nil
         states[id] = nil
+        offlineSubscriptionIDs.remove(id)
+        everConnectedIDs.remove(id)
+        notifiedOfflineIDs.remove(id)
+        cancelPendingDropNotification(id)
         subscriptions.removeAll { $0.id == id }
         messages.removeAll { $0.subscriptionID == id }
         persistSubscriptions()
@@ -139,6 +177,9 @@ final class SubscriptionManager: ObservableObject {
     private func connect(_ sub: Subscription, restart: Bool = false) {
         if sub.isMuted {
             connections[sub.id]?.stop()
+            offlineSubscriptionIDs.remove(sub.id)
+            notifiedOfflineIDs.remove(sub.id)
+            cancelPendingDropNotification(sub.id)
             return
         }
         if let existing = connections[sub.id] {
@@ -149,7 +190,7 @@ final class SubscriptionManager: ObservableObject {
         }
         let connection = NtfyConnection(subscription: sub)
         connection.onStateChange = { [weak self] state in
-            self?.states[sub.id] = state
+            self?.handleStateChange(sub.id, state)
         }
         connection.onCursorInvalidated = { [weak self] in
             self?.clearCursor(for: sub.id)
@@ -159,6 +200,73 @@ final class SubscriptionManager: ObservableObject {
         }
         connections[sub.id] = connection
         connection.start()
+    }
+
+    /// Tracks per-subscription connection state, maintains the offline set that
+    /// badges the menu bar, and fires a one-shot notification the moment a live
+    /// connection drops.
+    private func handleStateChange(_ id: UUID, _ newState: ConnectionState) {
+        states[id] = newState
+
+        switch newState {
+        case .connected:
+            everConnectedIDs.insert(id)
+            offlineSubscriptionIDs.remove(id)
+            cancelPendingDropNotification(id)
+            // Mirror the offline alert: announce recovery only if we actually
+            // told the user it had gone offline.
+            if notifiedOfflineIDs.remove(id) != nil,
+               settings.showNotifications,
+               let sub = subscription(id: id), !sub.isMuted {
+                NotificationService.shared.presentConnectionRestored(subscription: sub)
+            }
+        case .disconnected(let reason):
+            markOffline(id, reason: reason)
+        case .reconnecting:
+            markOffline(id, reason: "The connection to the server was lost. Reconnecting…")
+        case .connecting, .idle:
+            // Sticky: leave the offline flag as-is. A still-broken subscription
+            // briefly passes through `.connecting` on each retry (and `.idle` on
+            // restart); keeping the flag avoids the badge flickering off while it
+            // is plainly still down.
+            break
+        }
+    }
+
+    /// Flag a subscription offline and, on the *first* transition into an outage
+    /// (not repeats within the same outage), alert if it had previously been
+    /// connected. Keying on "ever connected" rather than "the immediately
+    /// previous state was connected" means an outage that arrives via a restart
+    /// — `reconnectAll()` after a network/hosts change passes through
+    /// `.idle`/`.connecting` first — still notifies.
+    private func markOffline(_ id: UUID, reason: String) {
+        let freshlyOffline = !offlineSubscriptionIDs.contains(id)
+        offlineSubscriptionIDs.insert(id)
+        guard freshlyOffline, everConnectedIDs.contains(id),
+              settings.showNotifications,
+              let sub = subscription(id: id), !sub.isMuted else { return }
+        scheduleDropNotification(for: sub, reason: reason)
+    }
+
+    /// Fire the offline notification only if the subscription is *still* down
+    /// after a short grace period, so a brief blip (Wi-Fi switch, sleep/wake)
+    /// that reconnects within seconds doesn't pop a banner.
+    private func scheduleDropNotification(for sub: Subscription, reason: String) {
+        dropNotifyTasks[sub.id]?.cancel()
+        dropNotifyTasks[sub.id] = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            guard let self, !Task.isCancelled else { return }
+            if self.offlineSubscriptionIDs.contains(sub.id) {
+                NotificationService.shared.presentConnectionDrop(subscription: sub, reason: reason)
+                self.notifiedOfflineIDs.insert(sub.id)
+            }
+            self.dropNotifyTasks[sub.id] = nil
+        }
+    }
+
+    private func cancelPendingDropNotification(_ id: UUID) {
+        dropNotifyTasks[id]?.cancel()
+        dropNotifyTasks[id] = nil
     }
 
     // MARK: - Message ingestion
@@ -287,6 +395,21 @@ final class SubscriptionManager: ObservableObject {
                 Task { @MainActor [weak self] in self?.reconnectAll() }
             }
             .store(in: &cancellables)
+
+        // `/etc/hosts` changed: a host reachable only via a hosts override may
+        // now point at a new IP. Reconnect so the streams re-resolve and pick it
+        // up without the user quitting the app. Debounced because an editor save
+        // can emit several filesystem events; the 1s delay also lets the system
+        // resolver reload the file before we re-resolve.
+        hostsChanged
+            .debounce(for: .seconds(1), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in self?.reconnectAll() }
+            }
+            .store(in: &cancellables)
+        hostsWatcher = HostsFileWatcher(path: "/etc/hosts") { [weak self] in
+            Task { @MainActor [weak self] in self?.hostsChanged.send() }
+        }
     }
 
     // MARK: - Persistence
@@ -297,5 +420,64 @@ final class SubscriptionManager: ObservableObject {
 
     private func persistMessages() {
         store.saveMessages(messages)
+    }
+}
+
+/// Watches a single file (e.g. `/etc/hosts`) and calls `onChange` whenever it is
+/// modified or replaced. Re-arms itself across atomic saves (write-to-temp +
+/// rename), which replace the inode and would otherwise leave a vnode source
+/// watching the old, now-orphaned file. All state is confined to `queue`.
+final class HostsFileWatcher: @unchecked Sendable {
+    private let path: String
+    private let onChange: () -> Void
+    private let queue = DispatchQueue(label: "com.ntfymac.hosts-watcher")
+    private var source: DispatchSourceFileSystemObject?
+    private var descriptor: Int32 = -1
+
+    init(path: String, onChange: @escaping () -> Void) {
+        self.path = path
+        self.onChange = onChange
+        queue.async { [weak self] in self?.arm() }
+    }
+
+    deinit {
+        source?.cancel()
+    }
+
+    private func arm() {
+        let fd = open(path, O_EVTONLY)
+        guard fd >= 0 else {
+            // File momentarily absent (e.g. mid-rename); retry shortly.
+            queue.asyncAfter(deadline: .now() + 1) { [weak self] in self?.arm() }
+            return
+        }
+        descriptor = fd
+        let src = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .extend, .attrib, .delete, .rename],
+            queue: queue
+        )
+        src.setEventHandler { [weak self] in
+            guard let self, let source = self.source else { return }
+            let flags = source.data
+            self.onChange()
+            // An atomic save replaces the file's inode; reopen to keep watching.
+            if !flags.intersection([.delete, .rename]).isEmpty {
+                self.rearm()
+            }
+        }
+        src.setCancelHandler { [weak self] in
+            guard let self, self.descriptor >= 0 else { return }
+            close(self.descriptor)
+            self.descriptor = -1
+        }
+        source = src
+        src.resume()
+    }
+
+    private func rearm() {
+        source?.cancel()   // closes the old descriptor via the cancel handler
+        source = nil
+        queue.asyncAfter(deadline: .now() + 0.2) { [weak self] in self?.arm() }
     }
 }
