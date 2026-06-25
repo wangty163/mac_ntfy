@@ -31,6 +31,11 @@ final class SubscriptionManager: ObservableObject {
     /// "satisfied" but silently kills established streams, so we track the
     /// interface set and reconnect when it changes.
     private var pathInterfaces: Set<String>?
+    /// Watches `/etc/hosts` so that editing the file (e.g. pointing a hostname
+    /// at a new IP after the server moved) reconnects the running app on its
+    /// own, without a quit/relaunch.
+    private var hostsWatcher: HostsFileWatcher?
+    private let hostsChanged = PassthroughSubject<Void, Never>()
 
     init(settings: AppSettings) {
         self.settings = settings
@@ -287,6 +292,21 @@ final class SubscriptionManager: ObservableObject {
                 Task { @MainActor [weak self] in self?.reconnectAll() }
             }
             .store(in: &cancellables)
+
+        // `/etc/hosts` changed: a host reachable only via a hosts override may
+        // now point at a new IP. Reconnect so the streams re-resolve and pick it
+        // up without the user quitting the app. Debounced because an editor save
+        // can emit several filesystem events; the 1s delay also lets the system
+        // resolver reload the file before we re-resolve.
+        hostsChanged
+            .debounce(for: .seconds(1), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in self?.reconnectAll() }
+            }
+            .store(in: &cancellables)
+        hostsWatcher = HostsFileWatcher(path: "/etc/hosts") { [weak self] in
+            Task { @MainActor [weak self] in self?.hostsChanged.send() }
+        }
     }
 
     // MARK: - Persistence
@@ -297,5 +317,64 @@ final class SubscriptionManager: ObservableObject {
 
     private func persistMessages() {
         store.saveMessages(messages)
+    }
+}
+
+/// Watches a single file (e.g. `/etc/hosts`) and calls `onChange` whenever it is
+/// modified or replaced. Re-arms itself across atomic saves (write-to-temp +
+/// rename), which replace the inode and would otherwise leave a vnode source
+/// watching the old, now-orphaned file. All state is confined to `queue`.
+final class HostsFileWatcher: @unchecked Sendable {
+    private let path: String
+    private let onChange: () -> Void
+    private let queue = DispatchQueue(label: "com.ntfymac.hosts-watcher")
+    private var source: DispatchSourceFileSystemObject?
+    private var descriptor: Int32 = -1
+
+    init(path: String, onChange: @escaping () -> Void) {
+        self.path = path
+        self.onChange = onChange
+        queue.async { [weak self] in self?.arm() }
+    }
+
+    deinit {
+        source?.cancel()
+    }
+
+    private func arm() {
+        let fd = open(path, O_EVTONLY)
+        guard fd >= 0 else {
+            // File momentarily absent (e.g. mid-rename); retry shortly.
+            queue.asyncAfter(deadline: .now() + 1) { [weak self] in self?.arm() }
+            return
+        }
+        descriptor = fd
+        let src = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .extend, .attrib, .delete, .rename],
+            queue: queue
+        )
+        src.setEventHandler { [weak self] in
+            guard let self, let source = self.source else { return }
+            let flags = source.data
+            self.onChange()
+            // An atomic save replaces the file's inode; reopen to keep watching.
+            if !flags.intersection([.delete, .rename]).isEmpty {
+                self.rearm()
+            }
+        }
+        src.setCancelHandler { [weak self] in
+            guard let self, self.descriptor >= 0 else { return }
+            close(self.descriptor)
+            self.descriptor = -1
+        }
+        source = src
+        src.resume()
+    }
+
+    private func rearm() {
+        source?.cancel()   // closes the old descriptor via the cancel handler
+        source = nil
+        queue.asyncAfter(deadline: .now() + 0.2) { [weak self] in self?.arm() }
     }
 }
