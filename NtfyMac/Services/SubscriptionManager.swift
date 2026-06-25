@@ -24,6 +24,11 @@ final class SubscriptionManager: ObservableObject {
     /// Pending grace-period tasks for the offline notification, keyed by
     /// subscription, so a quick reconnect can cancel the alert before it fires.
     private var dropNotifyTasks: [UUID: Task<Void, Never>] = [:]
+    /// Subscriptions that have connected at least once since their current
+    /// endpoint was set. Used to distinguish a real outage (was working, now
+    /// down) from one that never managed to connect, so we only alert on the
+    /// former.
+    private var everConnectedIDs: Set<UUID> = []
 
     private let settings: AppSettings
     private let store = PersistenceStore.shared
@@ -118,7 +123,12 @@ final class SubscriptionManager: ObservableObject {
 
         // A different topic/server invalidates the `since` cursor.
         let endpointChanged = old.normalizedBaseURL != sub.normalizedBaseURL || old.topic != sub.topic
-        if endpointChanged { sub.lastMessageID = nil }
+        if endpointChanged {
+            sub.lastMessageID = nil
+            // The new endpoint must connect once before a drop counts as an
+            // outage, so it isn't immediately reported offline if unreachable.
+            everConnectedIDs.remove(sub.id)
+        }
 
         subscriptions[idx] = sub
         persistSubscriptions()
@@ -140,6 +150,7 @@ final class SubscriptionManager: ObservableObject {
         connections[id] = nil
         states[id] = nil
         offlineSubscriptionIDs.remove(id)
+        everConnectedIDs.remove(id)
         cancelPendingDropNotification(id)
         subscriptions.removeAll { $0.id == id }
         messages.removeAll { $0.subscriptionID == id }
@@ -188,25 +199,17 @@ final class SubscriptionManager: ObservableObject {
     /// badges the menu bar, and fires a one-shot notification the moment a live
     /// connection drops.
     private func handleStateChange(_ id: UUID, _ newState: ConnectionState) {
-        let previous = states[id]
         states[id] = newState
 
         switch newState {
         case .connected:
+            everConnectedIDs.insert(id)
             offlineSubscriptionIDs.remove(id)
             cancelPendingDropNotification(id)
         case .disconnected(let reason):
-            let wasConnected = previous?.isConnected == true
-            offlineSubscriptionIDs.insert(id)
-            // Notify only on a genuine drop from a live connection — not on the
-            // repeated failures of an ongoing reconnect cycle, and not for a
-            // subscription that never managed to connect in the first place.
-            if wasConnected, settings.showNotifications,
-               let sub = subscription(id: id), !sub.isMuted {
-                scheduleDropNotification(for: sub, reason: reason)
-            }
+            markOffline(id, reason: reason)
         case .reconnecting:
-            offlineSubscriptionIDs.insert(id)
+            markOffline(id, reason: "The connection to the server was lost. Reconnecting…")
         case .connecting, .idle:
             // Sticky: leave the offline flag as-is. A still-broken subscription
             // briefly passes through `.connecting` on each retry (and `.idle` on
@@ -214,6 +217,21 @@ final class SubscriptionManager: ObservableObject {
             // is plainly still down.
             break
         }
+    }
+
+    /// Flag a subscription offline and, on the *first* transition into an outage
+    /// (not repeats within the same outage), alert if it had previously been
+    /// connected. Keying on "ever connected" rather than "the immediately
+    /// previous state was connected" means an outage that arrives via a restart
+    /// — `reconnectAll()` after a network/hosts change passes through
+    /// `.idle`/`.connecting` first — still notifies.
+    private func markOffline(_ id: UUID, reason: String) {
+        let freshlyOffline = !offlineSubscriptionIDs.contains(id)
+        offlineSubscriptionIDs.insert(id)
+        guard freshlyOffline, everConnectedIDs.contains(id),
+              settings.showNotifications,
+              let sub = subscription(id: id), !sub.isMuted else { return }
+        scheduleDropNotification(for: sub, reason: reason)
     }
 
     /// Fire the offline notification only if the subscription is *still* down
