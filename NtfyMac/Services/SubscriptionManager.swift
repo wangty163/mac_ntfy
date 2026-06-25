@@ -29,6 +29,10 @@ final class SubscriptionManager: ObservableObject {
     /// down) from one that never managed to connect, so we only alert on the
     /// former.
     private var everConnectedIDs: Set<UUID> = []
+    /// Subscriptions for which an offline notification was actually delivered, so
+    /// that a matching "back online" notification is posted only after a real,
+    /// announced outage (not after a brief blip that was never announced).
+    private var notifiedOfflineIDs: Set<UUID> = []
 
     private let settings: AppSettings
     private let store = PersistenceStore.shared
@@ -128,6 +132,7 @@ final class SubscriptionManager: ObservableObject {
             // The new endpoint must connect once before a drop counts as an
             // outage, so it isn't immediately reported offline if unreachable.
             everConnectedIDs.remove(sub.id)
+            notifiedOfflineIDs.remove(sub.id)
         }
 
         subscriptions[idx] = sub
@@ -151,6 +156,7 @@ final class SubscriptionManager: ObservableObject {
         states[id] = nil
         offlineSubscriptionIDs.remove(id)
         everConnectedIDs.remove(id)
+        notifiedOfflineIDs.remove(id)
         cancelPendingDropNotification(id)
         subscriptions.removeAll { $0.id == id }
         messages.removeAll { $0.subscriptionID == id }
@@ -172,6 +178,7 @@ final class SubscriptionManager: ObservableObject {
         if sub.isMuted {
             connections[sub.id]?.stop()
             offlineSubscriptionIDs.remove(sub.id)
+            notifiedOfflineIDs.remove(sub.id)
             cancelPendingDropNotification(sub.id)
             return
         }
@@ -206,6 +213,13 @@ final class SubscriptionManager: ObservableObject {
             everConnectedIDs.insert(id)
             offlineSubscriptionIDs.remove(id)
             cancelPendingDropNotification(id)
+            // Mirror the offline alert: announce recovery only if we actually
+            // told the user it had gone offline.
+            if notifiedOfflineIDs.remove(id) != nil,
+               settings.showNotifications,
+               let sub = subscription(id: id), !sub.isMuted {
+                NotificationService.shared.presentConnectionRestored(subscription: sub)
+            }
         case .disconnected(let reason):
             markOffline(id, reason: reason)
         case .reconnecting:
@@ -244,6 +258,7 @@ final class SubscriptionManager: ObservableObject {
             guard let self, !Task.isCancelled else { return }
             if self.offlineSubscriptionIDs.contains(sub.id) {
                 NotificationService.shared.presentConnectionDrop(subscription: sub, reason: reason)
+                self.notifiedOfflineIDs.insert(sub.id)
             }
             self.dropNotifyTasks[sub.id] = nil
         }

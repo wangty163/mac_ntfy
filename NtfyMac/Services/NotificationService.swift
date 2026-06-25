@@ -123,6 +123,38 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
+    /// Posts a local notification when a subscription that had dropped comes back
+    /// online, and clears the earlier offline banner so Notification Center isn't
+    /// left showing a stale "offline" next to the recovery.
+    func presentConnectionRestored(subscription: Subscription) {
+        center.removeDeliveredNotifications(
+            withIdentifiers: ["offline-\(subscription.id.uuidString)"]
+        )
+
+        let content = UNMutableNotificationContent()
+        content.title = "Subscription back online"
+        content.subtitle = subscription.name
+        content.body = "The connection to the server was restored."
+        content.interruptionLevel = .active
+        content.threadIdentifier = "connection-\(subscription.id.uuidString)"
+        content.userInfo = [
+            "subscriptionID": subscription.id.uuidString,
+            "messageID": "",
+            "click": "",
+        ]
+
+        let request = UNNotificationRequest(
+            identifier: "online-\(subscription.id.uuidString)",
+            content: content,
+            trigger: nil
+        )
+        center.add(request) { error in
+            if let error {
+                NSLog("Failed to deliver recovery notification: \(error.localizedDescription)")
+            }
+        }
+    }
+
     /// Reads the current authorization status (for surfacing in the UI when the
     /// user hasn't granted permission yet).
     nonisolated func currentAuthorizationStatus(_ completion: @escaping (UNAuthorizationStatus) -> Void) {
