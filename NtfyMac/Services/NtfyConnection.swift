@@ -147,31 +147,20 @@ final class NtfyConnection {
             throw URLError(.badURL)
         }
 
-        // Prefer an explicit `/etc/hosts` mapping from the very first attempt,
-        // dialing its IP directly so the override always wins over URLSession's
-        // DNS. On machines where the hostname resolves *only* through
-        // `/etc/hosts`, the system resolver (and URLSession's in-process DNS
-        // cache) never see the override, so connecting by hostname fails or
-        // stalls even though the user has pointed `/etc/hosts` at the right IP.
-        let initial = EndpointResolver.preferredEndpoint(for: url)
         do {
-            try await stream(
-                url: initial.url,
-                hostHeader: initial.hostHeader,
-                pinnedHost: initial.pinnedHostname
-            )
+            try await stream(url: url)
         } catch {
-            // A connection-level failure on an unchanged hostname is often a
-            // stale DNS cache: URLSession keeps dialing the old IP even after the
-            // server moved. Re-resolve the host ourselves and retry the freshly
-            // resolved IP directly, bypassing that cache.
+            // A connection-level failure on an unchanged hostname can mean a
+            // stale DNS cache or a host reachable only via /etc/hosts. Re-resolve
+            // the host ourselves and retry the resolved IP directly, as a
+            // fallback — the hostname attempt above is the normal path and keeps
+            // TLS SNI correct for reverse proxies, so we only reach here when it
+            // actually failed.
             guard EndpointResolver.shouldRetryWithResolvedAddress(for: url, error: error) else {
                 throw error
             }
             let endpoint = await EndpointResolver.resolvedEndpoint(for: url)
-            // Skip the retry when it would just re-dial the address we already
-            // failed on (e.g. the `/etc/hosts` IP used on the first attempt).
-            guard endpoint.hostHeader != nil, endpoint.url != initial.url else { throw error }
+            guard endpoint.hostHeader != nil else { throw error }
             try await stream(
                 url: endpoint.url,
                 hostHeader: endpoint.hostHeader,
@@ -304,21 +293,6 @@ enum EndpointResolver {
         default:
             return false
         }
-    }
-
-    /// The endpoint to dial on the *first* attempt. An explicit `/etc/hosts`
-    /// mapping is authoritative and dialed directly, so it always beats
-    /// URLSession's system DNS — essential on machines where the hostname
-    /// resolves *only* through `/etc/hosts`. When there is no hosts entry, the
-    /// original URL is returned unchanged so normal DNS applies (a fresh lookup
-    /// here would just duplicate what URLSession is about to do anyway).
-    static func preferredEndpoint(for url: URL) -> ResolvedEndpoint {
-        let original = ResolvedEndpoint(url: url, hostHeader: nil, pinnedHostname: nil)
-        guard let host = url.host, !isIPAddress(host),
-              let address = hostsAddress(for: host) else {
-            return original
-        }
-        return endpoint(for: url, host: host, dialing: address) ?? original
     }
 
     /// Resolve the URL's host to an IP, bypassing URLSession's DNS cache. Prefers
