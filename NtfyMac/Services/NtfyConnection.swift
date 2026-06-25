@@ -327,9 +327,12 @@ enum EndpointResolver {
         let unresolved = ResolvedEndpoint(url: url, hostHeader: nil, pinnedHostname: nil)
         guard let host = url.host, !isIPAddress(host) else { return unresolved }
 
-        guard let address = hostsAddress(for: host) ?? (await freshAddress(for: host)) else {
-            return unresolved
+        // `await` can't appear inside the `??` autoclosure, so fall back explicitly.
+        var address = hostsAddress(for: host)
+        if address == nil {
+            address = await freshAddress(for: host)
         }
+        guard let address else { return unresolved }
         return endpoint(for: url, host: host, dialing: address) ?? unresolved
     }
 
