@@ -46,14 +46,23 @@ enum NtfyPublisher {
         if req.markdown { payload["markdown"] = true }
 
         let body = try JSONSerialization.data(withJSONObject: payload)
+        // Prefer an explicit `/etc/hosts` mapping from the first attempt so the
+        // override wins over URLSession's DNS (see EndpointResolver).
+        let initial = EndpointResolver.preferredEndpoint(for: url)
         do {
-            try await sendPublish(url: url, body: body, subscription: subscription)
+            try await sendPublish(
+                url: initial.url,
+                hostHeader: initial.hostHeader,
+                pinnedHost: initial.pinnedHostname,
+                body: body,
+                subscription: subscription
+            )
         } catch {
             guard EndpointResolver.shouldRetryWithResolvedAddress(for: url, error: error) else {
                 throw error
             }
             let endpoint = await EndpointResolver.resolvedEndpoint(for: url)
-            guard endpoint.hostHeader != nil else { throw error }
+            guard endpoint.hostHeader != nil, endpoint.url != initial.url else { throw error }
             try await sendPublish(
                 url: endpoint.url,
                 hostHeader: endpoint.hostHeader,
@@ -70,8 +79,16 @@ enum NtfyPublisher {
             return .failure(URLError(.badURL))
         }
 
+        // Prefer an explicit `/etc/hosts` mapping from the first attempt so the
+        // override wins over URLSession's DNS (see EndpointResolver).
+        let initial = EndpointResolver.preferredEndpoint(for: url)
         do {
-            let response = try await sendTestRequest(url: url, subscription: subscription)
+            let response = try await sendTestRequest(
+                url: initial.url,
+                hostHeader: initial.hostHeader,
+                pinnedHost: initial.pinnedHostname,
+                subscription: subscription
+            )
             guard let http = response as? HTTPURLResponse else {
                 return .failure(NtfyError.http("No response"))
             }
@@ -86,7 +103,7 @@ enum NtfyPublisher {
                 return .failure(error)
             }
             let endpoint = await EndpointResolver.resolvedEndpoint(for: url)
-            guard endpoint.hostHeader != nil else { return .failure(error) }
+            guard endpoint.hostHeader != nil, endpoint.url != initial.url else { return .failure(error) }
             do {
                 let response = try await sendTestRequest(
                     url: endpoint.url,

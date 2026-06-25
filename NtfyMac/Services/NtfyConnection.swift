@@ -147,8 +147,19 @@ final class NtfyConnection {
             throw URLError(.badURL)
         }
 
+        // Prefer an explicit `/etc/hosts` mapping from the very first attempt,
+        // dialing its IP directly so the override always wins over URLSession's
+        // DNS. On machines where the hostname resolves *only* through
+        // `/etc/hosts`, the system resolver (and URLSession's in-process DNS
+        // cache) never see the override, so connecting by hostname fails or
+        // stalls even though the user has pointed `/etc/hosts` at the right IP.
+        let initial = EndpointResolver.preferredEndpoint(for: url)
         do {
-            try await stream(url: url)
+            try await stream(
+                url: initial.url,
+                hostHeader: initial.hostHeader,
+                pinnedHost: initial.pinnedHostname
+            )
         } catch {
             // A connection-level failure on an unchanged hostname is often a
             // stale DNS cache: URLSession keeps dialing the old IP even after the
@@ -158,7 +169,9 @@ final class NtfyConnection {
                 throw error
             }
             let endpoint = await EndpointResolver.resolvedEndpoint(for: url)
-            guard endpoint.hostHeader != nil else { throw error }
+            // Skip the retry when it would just re-dial the address we already
+            // failed on (e.g. the `/etc/hosts` IP used on the first attempt).
+            guard endpoint.hostHeader != nil, endpoint.url != initial.url else { throw error }
             try await stream(
                 url: endpoint.url,
                 hostHeader: endpoint.hostHeader,
@@ -293,21 +306,41 @@ enum EndpointResolver {
         }
     }
 
+    /// The endpoint to dial on the *first* attempt. An explicit `/etc/hosts`
+    /// mapping is authoritative and dialed directly, so it always beats
+    /// URLSession's system DNS — essential on machines where the hostname
+    /// resolves *only* through `/etc/hosts`. When there is no hosts entry, the
+    /// original URL is returned unchanged so normal DNS applies (a fresh lookup
+    /// here would just duplicate what URLSession is about to do anyway).
+    static func preferredEndpoint(for url: URL) -> ResolvedEndpoint {
+        let original = ResolvedEndpoint(url: url, hostHeader: nil, pinnedHostname: nil)
+        guard let host = url.host, !isIPAddress(host),
+              let address = hostsAddress(for: host) else {
+            return original
+        }
+        return endpoint(for: url, host: host, dialing: address) ?? original
+    }
+
     /// Resolve the URL's host to an IP, bypassing URLSession's DNS cache. Prefers
     /// an `/etc/hosts` override, otherwise performs a fresh `getaddrinfo` lookup.
     static func resolvedEndpoint(for url: URL) async -> ResolvedEndpoint {
         let unresolved = ResolvedEndpoint(url: url, hostHeader: nil, pinnedHostname: nil)
         guard let host = url.host, !isIPAddress(host) else { return unresolved }
 
-        let address = hostsAddress(for: host) ?? (await freshAddress(for: host))
-        guard let address,
-              var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        else {
+        guard let address = hostsAddress(for: host) ?? (await freshAddress(for: host)) else {
             return unresolved
         }
+        return endpoint(for: url, host: host, dialing: address) ?? unresolved
+    }
 
+    /// Build an endpoint that dials `address` directly while preserving the
+    /// original host for the `Host` header and (for HTTPS) certificate checks.
+    private static func endpoint(for url: URL, host: String, dialing address: String) -> ResolvedEndpoint? {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
         components.host = address
-        guard let resolvedURL = components.url else { return unresolved }
+        guard let resolvedURL = components.url else { return nil }
 
         return ResolvedEndpoint(
             url: resolvedURL,

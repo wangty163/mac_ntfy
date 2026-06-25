@@ -131,10 +131,16 @@ Lessons learned from debugging this case:
 - Treat “browser works” as a hint, not proof that every HTTP client resolves and
   routes the hostname the same way. Always check whether `/etc/hosts`, VPN,
   proxy, or split-DNS rules are involved.
-- Preserve the original hostname when falling back to a hosts-mapped address.
-  The app retries failed ntfy requests against the IP from `/etc/hosts`, but
+- Treat an `/etc/hosts` entry as authoritative and use it from the **first**
+  attempt, not just as a retry after a failure. The app now dials the
+  hosts-mapped IP directly up front, so the override takes effect even on
+  machines where the hostname resolves *only* through `/etc/hosts` (the system
+  resolver and `URLSession`'s in-process DNS cache never see the override, so
+  connecting by hostname would otherwise stall or fail).
+- Preserve the original hostname when dialing a hosts-mapped address: the app
   still sends the original `Host` header so virtual hosts and reverse proxies
-  can route the request correctly.
+  can route the request correctly, and validates the HTTPS certificate against
+  the hostname rather than the IP it dialed.
 - Apply the same fallback to all ntfy network paths: subscription streams, the
   add/edit subscription **Test** button, and publishing. Otherwise one action can
   appear fixed while another still fails.
