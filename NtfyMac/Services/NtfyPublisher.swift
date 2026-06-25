@@ -49,13 +49,15 @@ enum NtfyPublisher {
         do {
             try await sendPublish(url: url, body: body, subscription: subscription)
         } catch {
-            guard LocalHostsResolver.shouldRetryWithHostsMapping(for: url, error: error) else {
+            guard EndpointResolver.shouldRetryWithResolvedAddress(for: url, error: error) else {
                 throw error
             }
-            let mappedURL = LocalHostsResolver.mappedURL(for: url)
+            let endpoint = await EndpointResolver.resolvedEndpoint(for: url)
+            guard endpoint.hostHeader != nil else { throw error }
             try await sendPublish(
-                url: mappedURL.url,
-                hostHeader: mappedURL.hostHeader,
+                url: endpoint.url,
+                hostHeader: endpoint.hostHeader,
+                pinnedHost: endpoint.pinnedHostname,
                 body: body,
                 subscription: subscription
             )
@@ -80,14 +82,16 @@ enum NtfyPublisher {
             default: return .failure(NtfyError.http("HTTP \(http.statusCode)"))
             }
         } catch {
-            guard LocalHostsResolver.shouldRetryWithHostsMapping(for: url, error: error) else {
+            guard EndpointResolver.shouldRetryWithResolvedAddress(for: url, error: error) else {
                 return .failure(error)
             }
-            let mappedURL = LocalHostsResolver.mappedURL(for: url)
+            let endpoint = await EndpointResolver.resolvedEndpoint(for: url)
+            guard endpoint.hostHeader != nil else { return .failure(error) }
             do {
                 let response = try await sendTestRequest(
-                    url: mappedURL.url,
-                    hostHeader: mappedURL.hostHeader,
+                    url: endpoint.url,
+                    hostHeader: endpoint.hostHeader,
+                    pinnedHost: endpoint.pinnedHostname,
                     subscription: subscription
                 )
                 guard let http = response as? HTTPURLResponse else {
@@ -108,6 +112,7 @@ enum NtfyPublisher {
     private static func sendPublish(
         url: URL,
         hostHeader: String? = nil,
+        pinnedHost: String? = nil,
         body: Data,
         subscription: Subscription
     ) async throws {
@@ -122,7 +127,7 @@ enum NtfyPublisher {
         }
         request.httpBody = body
 
-        let session = ProxyConfig.makeEphemeralSession()
+        let session = ProxyConfig.makeEphemeralSession(pinnedHost: pinnedHost)
         defer { session.finishTasksAndInvalidate() }
         let (_, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
@@ -134,6 +139,7 @@ enum NtfyPublisher {
     private static func sendTestRequest(
         url: URL,
         hostHeader: String? = nil,
+        pinnedHost: String? = nil,
         subscription: Subscription
     ) async throws -> URLResponse {
         var request = URLRequest(url: url)
@@ -144,7 +150,7 @@ enum NtfyPublisher {
         if let auth = subscription.auth.authorizationHeader {
             request.setValue(auth, forHTTPHeaderField: "Authorization")
         }
-        let session = ProxyConfig.makeEphemeralSession()
+        let session = ProxyConfig.makeEphemeralSession(pinnedHost: pinnedHost)
         defer { session.finishTasksAndInvalidate() }
         let (_, response) = try await session.data(for: request)
         return response

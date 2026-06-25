@@ -145,6 +145,26 @@ Lessons learned from debugging this case:
   stale `since` cursor. ntfy only caches messages for a limited time, so the app
   clears a rejected saved cursor and reconnects without it.
 
+### The server's IP changed but the app stays offline (browser still works)
+
+When a self-hosted server keeps its hostname but changes IP (dynamic DNS,
+failover, ISP reassignment), the app can get stuck failing to reconnect even
+though a browser opens the URL fine. The cause is `URLSession`'s process-wide
+DNS cache: it keeps resolving the hostname to the old, now-dead IP, and a fresh
+ephemeral session per attempt does **not** flush that cache. A browser is a
+separate process with a different cache, so it picks up the new IP.
+
+On a connection-level failure the app now re-resolves the hostname itself with
+`getaddrinfo` — which honors the DNS record's TTL instead of the cache — and
+retries against the freshly resolved IP, while:
+
+- still sending the original `Host` header (so reverse proxies route correctly), and
+- validating the HTTPS certificate against the original **hostname**, not the IP
+  it dialed.
+
+So the app recovers on its own once DNS reflects the new IP, without a restart.
+Keep the configured server URL on the hostname (not a raw IP) so this works.
+
 ### Topics go offline while Clash/Surge (system proxy) is running
 
 When a proxy tool like Clash Verge enables the macOS **system proxy**,
