@@ -153,22 +153,26 @@ Lessons learned from debugging this case:
 ### The server's IP changed but the app stays offline (browser still works)
 
 When a self-hosted server keeps its hostname but changes IP (dynamic DNS,
-failover, ISP reassignment), the app can get stuck failing to reconnect even
-though a browser opens the URL fine. The cause is `URLSession`'s process-wide
-DNS cache: it keeps resolving the hostname to the old, now-dead IP, and a fresh
-ephemeral session per attempt does **not** flush that cache. A browser is a
-separate process with a different cache, so it picks up the new IP.
+failover, ISP reassignment, or an updated `/etc/hosts` entry), the app should
+recover the same way the browser does: by connecting to the **hostname**. Both
+the browser and the app resolve the hostname through the system resolver, which
+reads `/etc/hosts` first, so once the entry points at the new IP a reconnect
+picks it up automatically. Keep the configured server URL on the hostname (not a
+raw IP), including any non-standard port (e.g. `https://ntfy.example.com:8443`),
+so this works.
 
-On a connection-level failure the app now re-resolves the hostname itself with
-`getaddrinfo` — which honors the DNS record's TTL instead of the cache — and
-retries against the freshly resolved IP, while:
+Why the app does **not** just dial the IP itself for HTTPS: connecting to a raw
+IP keeps the `Host` header but cannot send the hostname as TLS **SNI** (an IP
+literal is not allowed in SNI). A reverse proxy that selects its certificate or
+backend by SNI would then serve the wrong vhost — a short request might still
+return `2xx`, but a long-lived subscription stream gets routed wrong and drops.
+So HTTPS always stays on the hostname; only plain **HTTP** (which has no TLS/SNI)
+falls back to a freshly `getaddrinfo`-resolved IP with the original `Host`
+header.
 
-- still sending the original `Host` header (so reverse proxies route correctly), and
-- validating the HTTPS certificate against the original **hostname**, not the IP
-  it dialed.
-
-So the app recovers on its own once DNS reflects the new IP, without a restart.
-Keep the configured server URL on the hostname (not a raw IP) so this works.
+If a long-running app stays stuck on the old IP after you update `/etc/hosts`,
+quit and relaunch it (or edit the subscription, which forces a fresh
+connection); a new connection re-resolves the hostname and picks up the change.
 
 ### Topics go offline while Clash/Surge (system proxy) is running
 

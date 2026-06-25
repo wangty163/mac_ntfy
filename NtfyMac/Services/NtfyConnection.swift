@@ -283,13 +283,20 @@ enum EndpointResolver {
     }
 
     /// Whether a failed request is worth retrying against a freshly-resolved IP.
-    /// Limited to connection-level failures on a hostname (not an IP literal).
+    ///
+    /// Restricted to **plain HTTP** on a hostname. Dialing a raw IP keeps the
+    /// `Host` header but drops TLS SNI — an IP literal can't appear in SNI — so
+    /// an HTTPS reverse proxy that selects its certificate or backend by SNI
+    /// would route the request to the wrong place. HTTPS therefore always stays
+    /// on the hostname, which already resolves through `/etc/hosts` via the
+    /// system resolver — the same path the browser uses to reach the server.
     static func shouldRetryWithResolvedAddress(for url: URL, error: Error) -> Bool {
+        guard url.scheme?.lowercased() == "http",
+              let host = url.host, !isIPAddress(host) else { return false }
         guard let urlError = error as? URLError else { return false }
         switch urlError.code {
         case .networkConnectionLost, .cannotFindHost, .cannotConnectToHost, .timedOut, .dnsLookupFailed:
-            guard let host = url.host else { return false }
-            return !isIPAddress(host)
+            return true
         default:
             return false
         }
