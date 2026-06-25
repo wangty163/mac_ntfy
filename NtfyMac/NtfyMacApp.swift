@@ -85,8 +85,16 @@ struct MenuBarLabel: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
+        // A dropped connection takes visual priority over the unread badge: the
+        // user needs to know the app may be missing messages.
+        let offline = manager.hasOfflineSubscriptions
         let showBadge = settings.showMenuBarCount && manager.totalUnread > 0
-        Image(systemName: showBadge ? "bell.badge.fill" : "bell.fill")
+        let symbol = offline
+            ? "exclamationmark.triangle.fill"
+            : (showBadge ? "bell.badge.fill" : "bell.fill")
+        Image(systemName: symbol)
+            .symbolRenderingMode(offline ? .multicolor : .monochrome)
+            .accessibilityLabel(offline ? "Ntfy — a subscription is offline" : "Ntfy")
             .task {
                 // The menu-bar label is the one view guaranteed to exist at
                 // launch, so use it to (a) expose `openWindow` to non-SwiftUI

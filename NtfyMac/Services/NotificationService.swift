@@ -92,6 +92,37 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
+    /// Posts a local notification when a subscription that was online drops, so
+    /// the user is alerted to the outage even with no window open. Unlike message
+    /// notifications this carries no message payload; a stable identifier means a
+    /// repeat drop replaces the previous alert rather than stacking.
+    func presentConnectionDrop(subscription: Subscription, reason: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "Subscription offline"
+        content.subtitle = subscription.name
+        content.body = reason.isEmpty
+            ? "The connection to the server was lost. Reconnecting…"
+            : reason
+        content.interruptionLevel = .active
+        content.threadIdentifier = "connection-\(subscription.id.uuidString)"
+        content.userInfo = [
+            "subscriptionID": subscription.id.uuidString,
+            "messageID": "",
+            "click": "",
+        ]
+
+        let request = UNNotificationRequest(
+            identifier: "offline-\(subscription.id.uuidString)",
+            content: content,
+            trigger: nil
+        )
+        center.add(request) { error in
+            if let error {
+                NSLog("Failed to deliver offline notification: \(error.localizedDescription)")
+            }
+        }
+    }
+
     /// Reads the current authorization status (for surfacing in the UI when the
     /// user hasn't granted permission yet).
     nonisolated func currentAuthorizationStatus(_ completion: @escaping (UNAuthorizationStatus) -> Void) {

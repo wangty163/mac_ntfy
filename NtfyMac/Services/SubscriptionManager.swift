@@ -17,6 +17,13 @@ final class SubscriptionManager: ObservableObject {
     @Published private(set) var subscriptions: [Subscription] = []
     @Published private(set) var messages: [StoredMessage] = []
     @Published private(set) var states: [UUID: ConnectionState] = [:]
+    /// Subscriptions that are currently not connected (offline or stuck
+    /// reconnecting). Drives the menu-bar trouble indicator. Sticky across a
+    /// reconnect attempt so the brief `.connecting` phase doesn't clear it.
+    @Published private(set) var offlineSubscriptionIDs: Set<UUID> = []
+    /// Pending grace-period tasks for the offline notification, keyed by
+    /// subscription, so a quick reconnect can cancel the alert before it fires.
+    private var dropNotifyTasks: [UUID: Task<Void, Never>] = [:]
 
     private let settings: AppSettings
     private let store = PersistenceStore.shared
@@ -85,6 +92,13 @@ final class SubscriptionManager: ObservableObject {
         states.values.contains { $0.isConnected }
     }
 
+    /// True when at least one (non-muted) subscription is offline — used to badge
+    /// the menu-bar icon so a dropped connection is visible without opening a
+    /// window.
+    var hasOfflineSubscriptions: Bool {
+        !offlineSubscriptionIDs.isEmpty
+    }
+
     func subscription(id: UUID) -> Subscription? {
         subscriptions.first { $0.id == id }
     }
@@ -125,6 +139,8 @@ final class SubscriptionManager: ObservableObject {
         connections[id]?.stop()
         connections[id] = nil
         states[id] = nil
+        offlineSubscriptionIDs.remove(id)
+        cancelPendingDropNotification(id)
         subscriptions.removeAll { $0.id == id }
         messages.removeAll { $0.subscriptionID == id }
         persistSubscriptions()
@@ -144,6 +160,8 @@ final class SubscriptionManager: ObservableObject {
     private func connect(_ sub: Subscription, restart: Bool = false) {
         if sub.isMuted {
             connections[sub.id]?.stop()
+            offlineSubscriptionIDs.remove(sub.id)
+            cancelPendingDropNotification(sub.id)
             return
         }
         if let existing = connections[sub.id] {
@@ -154,7 +172,7 @@ final class SubscriptionManager: ObservableObject {
         }
         let connection = NtfyConnection(subscription: sub)
         connection.onStateChange = { [weak self] state in
-            self?.states[sub.id] = state
+            self?.handleStateChange(sub.id, state)
         }
         connection.onCursorInvalidated = { [weak self] in
             self?.clearCursor(for: sub.id)
@@ -164,6 +182,58 @@ final class SubscriptionManager: ObservableObject {
         }
         connections[sub.id] = connection
         connection.start()
+    }
+
+    /// Tracks per-subscription connection state, maintains the offline set that
+    /// badges the menu bar, and fires a one-shot notification the moment a live
+    /// connection drops.
+    private func handleStateChange(_ id: UUID, _ newState: ConnectionState) {
+        let previous = states[id]
+        states[id] = newState
+
+        switch newState {
+        case .connected:
+            offlineSubscriptionIDs.remove(id)
+            cancelPendingDropNotification(id)
+        case .disconnected(let reason):
+            let wasConnected = previous?.isConnected == true
+            offlineSubscriptionIDs.insert(id)
+            // Notify only on a genuine drop from a live connection — not on the
+            // repeated failures of an ongoing reconnect cycle, and not for a
+            // subscription that never managed to connect in the first place.
+            if wasConnected, settings.showNotifications,
+               let sub = subscription(id: id), !sub.isMuted {
+                scheduleDropNotification(for: sub, reason: reason)
+            }
+        case .reconnecting:
+            offlineSubscriptionIDs.insert(id)
+        case .connecting, .idle:
+            // Sticky: leave the offline flag as-is. A still-broken subscription
+            // briefly passes through `.connecting` on each retry (and `.idle` on
+            // restart); keeping the flag avoids the badge flickering off while it
+            // is plainly still down.
+            break
+        }
+    }
+
+    /// Fire the offline notification only if the subscription is *still* down
+    /// after a short grace period, so a brief blip (Wi-Fi switch, sleep/wake)
+    /// that reconnects within seconds doesn't pop a banner.
+    private func scheduleDropNotification(for sub: Subscription, reason: String) {
+        dropNotifyTasks[sub.id]?.cancel()
+        dropNotifyTasks[sub.id] = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            guard let self, !Task.isCancelled else { return }
+            if self.offlineSubscriptionIDs.contains(sub.id) {
+                NotificationService.shared.presentConnectionDrop(subscription: sub, reason: reason)
+            }
+            self.dropNotifyTasks[sub.id] = nil
+        }
+    }
+
+    private func cancelPendingDropNotification(_ id: UUID) {
+        dropNotifyTasks[id]?.cancel()
+        dropNotifyTasks[id] = nil
     }
 
     // MARK: - Message ingestion
