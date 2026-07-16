@@ -147,6 +147,28 @@ final class NtfyConnection {
             throw URLError(.badURL)
         }
 
+        // An explicit /etc/hosts entry is authoritative in Direct mode. Dial
+        // that address through Network.framework so HTTPS keeps the original
+        // hostname for TLS SNI/certificate validation. This avoids getting
+        // stuck on a stale/unreachable AAAA record while a browser quickly
+        // succeeds through the hosts-mapped IPv4 address.
+        if let endpoint = HostsMappedHTTPClient.endpoint(for: url) {
+            do {
+                try await stream(requestURL: url, through: endpoint)
+                return
+            } catch let error as CancellationError {
+                throw error
+            } catch let error as NtfyError {
+                // HTTP/auth/cursor errors came from the intended server; do not
+                // hide them by trying a different DNS endpoint.
+                throw error
+            } catch {
+                // A stale hosts entry or a transient direct-route failure should
+                // not strand the app. Fall through to the normal hostname path,
+                // which retains URLSession's own IPv4/IPv6 selection.
+            }
+        }
+
         do {
             try await stream(url: url)
         } catch {
@@ -169,6 +191,35 @@ final class NtfyConnection {
         }
     }
 
+    private func stream(
+        requestURL url: URL,
+        through endpoint: HostsMappedHTTPClient.Endpoint
+    ) async throws {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 100
+        request.setValue("NtfyMac/1.0", forHTTPHeaderField: "User-Agent")
+        if let auth = subscription.auth.authorizationHeader {
+            request.setValue(auth, forHTTPHeaderField: "Authorization")
+        }
+
+        var lines = NDJSONLineBuffer()
+        try await HostsMappedHTTPClient.stream(
+            request: request,
+            endpoint: endpoint,
+            onResponse: { response in
+                try self.validateHTTPStatus(response.statusCode)
+            },
+            onBody: { data in
+                lines.append(data) { line in
+                    self.handle(line: line)
+                }
+            }
+        )
+        lines.finish { line in
+            handle(line: line)
+        }
+    }
+
     private func stream(url: URL, hostHeader: String? = nil, pinnedHost: String? = nil) async throws {
         var request = URLRequest(url: url)
         request.timeoutInterval = 100
@@ -184,24 +235,29 @@ final class NtfyConnection {
 
         let (bytes, response) = try await session.bytes(for: request)
 
-        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-            switch http.statusCode {
-            case 400 where subscription.lastMessageID != nil:
-                throw NtfyError.staleCursor
-            case 401, 403:
-                throw NtfyError.unauthorized("Authentication failed (\(http.statusCode))")
-            case 404:
-                throw NtfyError.http("Topic or server not found (404)")
-            case 429:
-                throw NtfyError.http("Rate limited (429)")
-            default:
-                throw NtfyError.http("Server returned HTTP \(http.statusCode)")
-            }
+        if let http = response as? HTTPURLResponse {
+            try validateHTTPStatus(http.statusCode)
         }
 
         for try await line in bytes.lines {
             if Task.isCancelled { break }
             handle(line: line)
+        }
+    }
+
+    private func validateHTTPStatus(_ statusCode: Int) throws {
+        guard !(200...299).contains(statusCode) else { return }
+        switch statusCode {
+        case 400 where subscription.lastMessageID != nil:
+            throw NtfyError.staleCursor
+        case 401, 403:
+            throw NtfyError.unauthorized("Authentication failed (\(statusCode))")
+        case 404:
+            throw NtfyError.http("Topic or server not found (404)")
+        case 429:
+            throw NtfyError.http("Rate limited (429)")
+        default:
+            throw NtfyError.http("Server returned HTTP \(statusCode)")
         }
     }
 
@@ -382,7 +438,7 @@ enum EndpointResolver {
         return ipv4 ?? ipv6
     }
 
-    private static func hostsAddress(for host: String) -> String? {
+    static func hostsAddress(for host: String) -> String? {
         guard let contents = try? String(contentsOfFile: "/etc/hosts", encoding: .utf8) else {
             return nil
         }
@@ -413,7 +469,7 @@ enum EndpointResolver {
             || (scheme?.lowercased() == "https" && port == 443)
     }
 
-    private static func isIPAddress(_ host: String) -> Bool {
+    static func isIPAddress(_ host: String) -> Bool {
         isIPv4Address(host) || host.contains(":")
     }
 
@@ -424,6 +480,33 @@ enum EndpointResolver {
             guard let value = Int(part), value >= 0, value <= 255 else { return false }
             return String(value) == part || part == "0"
         }
+    }
+}
+
+/// Converts arbitrary HTTP/chunk boundaries into the NDJSON lines expected by
+/// ntfy. A line can span any number of TCP or HTTP chunks.
+private struct NDJSONLineBuffer {
+    private var buffer = Data()
+
+    mutating func append(_ data: Data, handle: (String) -> Void) {
+        buffer.append(data)
+        while let newline = buffer.firstIndex(of: 10) {
+            var line = Data(buffer[..<newline])
+            buffer.removeSubrange(...newline)
+            if line.last == 13 { line.removeLast() }
+            if let string = String(data: line, encoding: .utf8) {
+                handle(string)
+            }
+        }
+    }
+
+    mutating func finish(handle: (String) -> Void) {
+        guard !buffer.isEmpty else { return }
+        if buffer.last == 13 { buffer.removeLast() }
+        if let string = String(data: buffer, encoding: .utf8) {
+            handle(string)
+        }
+        buffer.removeAll()
     }
 }
 

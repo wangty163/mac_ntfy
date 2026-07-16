@@ -71,15 +71,12 @@ enum NtfyPublisher {
         }
 
         do {
-            let response = try await sendTestRequest(url: url, subscription: subscription)
-            guard let http = response as? HTTPURLResponse else {
-                return .failure(NtfyError.http("No response"))
-            }
-            switch http.statusCode {
+            let statusCode = try await sendTestRequest(url: url, subscription: subscription)
+            switch statusCode {
             case 200...299: return .success(())
             case 401, 403: return .failure(NtfyError.http("Authentication failed"))
             case 404: return .failure(NtfyError.http("Topic or server not found"))
-            default: return .failure(NtfyError.http("HTTP \(http.statusCode)"))
+            default: return .failure(NtfyError.http("HTTP \(statusCode)"))
             }
         } catch {
             guard EndpointResolver.shouldRetryWithResolvedAddress(for: url, error: error) else {
@@ -88,20 +85,17 @@ enum NtfyPublisher {
             let endpoint = await EndpointResolver.resolvedEndpoint(for: url)
             guard endpoint.hostHeader != nil else { return .failure(error) }
             do {
-                let response = try await sendTestRequest(
+                let statusCode = try await sendTestRequest(
                     url: endpoint.url,
                     hostHeader: endpoint.hostHeader,
                     pinnedHost: endpoint.pinnedHostname,
                     subscription: subscription
                 )
-                guard let http = response as? HTTPURLResponse else {
-                    return .failure(NtfyError.http("No response"))
-                }
-                switch http.statusCode {
+                switch statusCode {
                 case 200...299: return .success(())
                 case 401, 403: return .failure(NtfyError.http("Authentication failed"))
                 case 404: return .failure(NtfyError.http("Topic or server not found"))
-                default: return .failure(NtfyError.http("HTTP \(http.statusCode)"))
+                default: return .failure(NtfyError.http("HTTP \(statusCode)"))
                 }
             } catch {
                 return .failure(error)
@@ -127,6 +121,24 @@ enum NtfyPublisher {
         }
         request.httpBody = body
 
+        if hostHeader == nil, pinnedHost == nil,
+           let endpoint = HostsMappedHTTPClient.endpoint(for: url) {
+            do {
+                let response = try await HostsMappedHTTPClient.request(request, endpoint: endpoint)
+                guard (200...299).contains(response.statusCode) else {
+                    throw NtfyError.http("Publish failed (HTTP \(response.statusCode))")
+                }
+                return
+            } catch let error as CancellationError {
+                throw error
+            } catch let error as NtfyError {
+                throw error
+            } catch {
+                // If the explicit hosts address is stale or temporarily down,
+                // retain the hostname URLSession path as a safe fallback.
+            }
+        }
+
         let session = ProxyConfig.makeEphemeralSession(pinnedHost: pinnedHost)
         defer { session.finishTasksAndInvalidate() }
         let (_, response) = try await session.data(for: request)
@@ -141,7 +153,7 @@ enum NtfyPublisher {
         hostHeader: String? = nil,
         pinnedHost: String? = nil,
         subscription: Subscription
-    ) async throws -> URLResponse {
+    ) async throws -> Int {
         var request = URLRequest(url: url)
         request.timeoutInterval = 15
         if let hostHeader {
@@ -150,9 +162,25 @@ enum NtfyPublisher {
         if let auth = subscription.auth.authorizationHeader {
             request.setValue(auth, forHTTPHeaderField: "Authorization")
         }
+
+        if hostHeader == nil, pinnedHost == nil,
+           let endpoint = HostsMappedHTTPClient.endpoint(for: url) {
+            do {
+                return try await HostsMappedHTTPClient.request(request, endpoint: endpoint).statusCode
+            } catch let error as CancellationError {
+                throw error
+            } catch {
+                // Keep the normal hostname path as a fallback when a hosts
+                // mapping itself is stale or unreachable.
+            }
+        }
+
         let session = ProxyConfig.makeEphemeralSession(pinnedHost: pinnedHost)
         defer { session.finishTasksAndInvalidate() }
         let (_, response) = try await session.data(for: request)
-        return response
+        guard let http = response as? HTTPURLResponse else {
+            throw NtfyError.http("No response")
+        }
+        return http.statusCode
     }
 }
