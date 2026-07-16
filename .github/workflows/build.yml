@@ -29,6 +29,9 @@ jobs:
           xcodebuild -version
           swift --version
 
+      - name: Run deterministic smoke tests
+        run: bash scripts/run_smoke_tests.sh
+
       - name: Build (Debug, unsigned)
         run: |
           set -o pipefail

@@ -2,10 +2,10 @@
 //  HostsMappedHTTPClient.swift
 //  NtfyMac
 //
-//  A small HTTP/1.1 transport for HTTPS hosts that have an explicit
-//  /etc/hosts mapping. URLSession cannot publicly separate the address it
-//  dials from the TLS server name, so a stale/unreachable AAAA record can win
-//  even though /etc/hosts points the hostname at a working IPv4 address.
+//  A small direct HTTP/1.1 transport with explicit Happy Eyeballs address
+//  racing. URLSession does not expose the address it selected or let callers
+//  separate that address from the TLS server name, which makes intermittent
+//  IPv6/DNS failures difficult to recover from and diagnose.
 //
 //  Network.framework does expose that separation: NWConnection dials the
 //  mapped IP while sec_protocol_options_set_tls_server_name keeps SNI and
@@ -18,16 +18,39 @@ import Network
 import Security
 
 enum HostsMappedHTTPClient {
-    struct Endpoint {
+    enum ResolverSource: String {
+        case hosts = "/etc/hosts"
+        case dns = "System DNS"
+        case literal = "Literal address"
+    }
+
+    struct Candidate: Equatable {
         let address: String
+
+        var family: String { address.contains(":") ? "IPv6" : "IPv4" }
+    }
+
+    struct Endpoint {
+        let candidates: [Candidate]
         let port: UInt16
         let originalHost: String
         let usesTLS: Bool
+        let resolverSource: ResolverSource
+    }
+
+    struct ConnectionInfo: Equatable {
+        let address: String
+        let family: String
+        let resolverSource: String
+        let candidates: [String]
+        let tlsServerName: String?
+        let latencyMilliseconds: Int
     }
 
     struct ResponseHead {
         let statusCode: Int
         let headers: [String: String]
+        var connectionInfo: ConnectionInfo? = nil
     }
 
     enum ClientError: LocalizedError {
@@ -42,45 +65,49 @@ enum HostsMappedHTTPClient {
         var errorDescription: String? {
             switch self {
             case .invalidEndpoint:
-                return "The hosts-mapped server address is invalid"
+                return "The direct server address is invalid"
             case .invalidRequest(let reason):
-                return "Could not build the hosts-mapped request: \(reason)"
+                return "Could not build the direct request: \(reason)"
             case .timedOut:
-                return "The hosts-mapped connection timed out"
+                return "The direct connection timed out"
             case .connectionClosed:
-                return "The hosts-mapped connection closed unexpectedly"
+                return "The direct connection closed unexpectedly"
             case .invalidResponse(let reason):
                 return "The server returned an invalid HTTP response: \(reason)"
             case .truncatedResponse:
-                return "The hosts-mapped HTTP response ended unexpectedly"
+                return "The direct HTTP response ended unexpectedly"
             case .network(let error):
                 return error.localizedDescription
             }
         }
     }
 
-    private static let queue = DispatchQueue(label: "com.ntfymac.hosts-http-client")
+    private static let queue = DispatchQueue(label: "com.ntfymac.direct-http-client")
     private static let headerTerminator = Data([13, 10, 13, 10])
 
-    /// Returns a direct endpoint only for HTTPS + Direct proxy mode + an
-    /// explicit /etc/hosts entry. Other requests keep using URLSession.
-    static func endpoint(for url: URL) -> Endpoint? {
-        let portValue = url.port ?? 443
+    /// Resolves every candidate address for a Direct-mode request. `/etc/hosts`
+    /// remains authoritative; otherwise a fresh system lookup is used so every
+    /// reconnect gets a current IPv4/IPv6 candidate set.
+    static func endpoint(for url: URL) async -> Endpoint? {
+        let scheme = url.scheme?.lowercased()
+        let portValue = url.port ?? (scheme == "http" ? 80 : 443)
         guard ProxyConfig.current().mode == .direct,
-              url.scheme?.lowercased() == "https",
+              scheme == "https" || scheme == "http",
               let host = url.host,
-              !EndpointResolver.isIPAddress(host),
-              let address = EndpointResolver.hostsAddress(for: host),
               (1...65535).contains(portValue)
         else {
             return nil
         }
 
+        let resolution = await EndpointResolver.resolveCandidates(for: host)
+        guard !resolution.addresses.isEmpty else { return nil }
+
         return Endpoint(
-            address: address,
+            candidates: happyEyeballsOrder(resolution.addresses).map(Candidate.init),
             port: UInt16(portValue),
             originalHost: host,
-            usesTLS: true
+            usesTLS: scheme == "https",
+            resolverSource: resolution.source
         )
     }
 
@@ -89,13 +116,15 @@ enum HostsMappedHTTPClient {
     static func stream(
         request: URLRequest,
         endpoint: Endpoint,
+        onConnected: (ConnectionInfo) -> Void = { _ in },
         onResponse: (ResponseHead) throws -> Void,
         onBody: (Data) -> Void
     ) async throws {
-        let connection = try makeConnection(to: endpoint)
+        let connected = try await connect(to: endpoint)
+        let connection = connected.connection
         defer { connection.cancel() }
 
-        try await start(connection)
+        onConnected(connected.info)
         try Task.checkCancellation()
         try await send(serialize(request, endpoint: endpoint, keepAlive: true), over: connection)
 
@@ -123,17 +152,90 @@ enum HostsMappedHTTPClient {
     /// Sends a finite request and returns as soon as the response headers are
     /// available. Publish and poll/Test calls only need the HTTP status.
     static func request(_ request: URLRequest, endpoint: Endpoint) async throws -> ResponseHead {
-        let connection = try makeConnection(to: endpoint)
+        let connected = try await connect(to: endpoint)
+        let connection = connected.connection
         defer { connection.cancel() }
 
-        try await start(connection)
         try Task.checkCancellation()
         try await send(serialize(request, endpoint: endpoint, keepAlive: false), over: connection)
-        let (head, _) = try await receiveHead(from: connection)
+        var (head, _) = try await receiveHead(from: connection)
+        head.connectionInfo = connected.info
         return head
     }
 
-    private static func makeConnection(to endpoint: Endpoint) throws -> NWConnection {
+    private struct ConnectedSocket {
+        let connection: NWConnection
+        let info: ConnectionInfo
+    }
+
+    private enum AttemptResult {
+        case success(ConnectedSocket)
+        case failure(Error)
+    }
+
+    /// Starts candidates 250 ms apart and keeps the first connection that
+    /// completes TCP + TLS. Losing attempts are cancelled before this returns.
+    private static func connect(to endpoint: Endpoint) async throws -> ConnectedSocket {
+        guard !endpoint.candidates.isEmpty else { throw ClientError.invalidEndpoint }
+
+        return try await withThrowingTaskGroup(of: AttemptResult.self) { group in
+            for (index, candidate) in endpoint.candidates.enumerated() {
+                group.addTask {
+                    do {
+                        if index > 0 {
+                            try await Task.sleep(
+                                nanoseconds: UInt64(index) * 250_000_000
+                            )
+                        }
+                        try Task.checkCancellation()
+                        let connection = try makeConnection(to: candidate, endpoint: endpoint)
+                        let startedAt = ContinuousClock.now
+                        do {
+                            try await start(connection)
+                        } catch {
+                            connection.cancel()
+                            throw error
+                        }
+                        let elapsed = startedAt.duration(to: .now)
+                        let milliseconds = max(0, Int(elapsed.components.seconds * 1_000)
+                            + Int(elapsed.components.attoseconds / 1_000_000_000_000_000))
+                        return .success(ConnectedSocket(
+                            connection: connection,
+                            info: ConnectionInfo(
+                                address: candidate.address,
+                                family: candidate.family,
+                                resolverSource: endpoint.resolverSource.rawValue,
+                                candidates: endpoint.candidates.map(\.address),
+                                tlsServerName: endpoint.usesTLS
+                                    && !EndpointResolver.isIPAddress(endpoint.originalHost)
+                                    ? endpoint.originalHost : nil,
+                                latencyMilliseconds: milliseconds
+                            )
+                        ))
+                    } catch {
+                        return .failure(error)
+                    }
+                }
+            }
+
+            var lastError: Error = ClientError.connectionClosed
+            while let result = try await group.next() {
+                switch result {
+                case .success(let connected):
+                    group.cancelAll()
+                    return connected
+                case .failure(let error):
+                    if error is CancellationError, Task.isCancelled {
+                        throw CancellationError()
+                    }
+                    lastError = error
+                }
+            }
+            throw lastError
+        }
+    }
+
+    private static func makeConnection(to candidate: Candidate, endpoint: Endpoint) throws -> NWConnection {
         guard let port = NWEndpoint.Port(rawValue: endpoint.port) else {
             throw ClientError.invalidEndpoint
         }
@@ -147,10 +249,12 @@ enum HostsMappedHTTPClient {
         let parameters: NWParameters
         if endpoint.usesTLS {
             let tls = NWProtocolTLS.Options()
-            sec_protocol_options_set_tls_server_name(
-                tls.securityProtocolOptions,
-                endpoint.originalHost
-            )
+            if !EndpointResolver.isIPAddress(endpoint.originalHost) {
+                sec_protocol_options_set_tls_server_name(
+                    tls.securityProtocolOptions,
+                    endpoint.originalHost
+                )
+            }
             // The parser below is deliberately HTTP/1.1-only.
             sec_protocol_options_add_tls_application_protocol(
                 tls.securityProtocolOptions,
@@ -162,10 +266,33 @@ enum HostsMappedHTTPClient {
         }
 
         return NWConnection(
-            host: NWEndpoint.Host(endpoint.address),
+            host: NWEndpoint.Host(candidate.address),
             port: port,
             using: parameters
         )
+    }
+
+    /// Preserve the resolver's preferred family, then alternate IPv6 and IPv4
+    /// so a run of unreachable addresses from one family cannot delay the other.
+    static func happyEyeballsOrder(_ addresses: [String]) -> [String] {
+        var unique: [String] = []
+        for address in addresses where !unique.contains(address) { unique.append(address) }
+        guard let first = unique.first else { return [] }
+
+        var ipv6 = unique.filter { $0.contains(":") }
+        var ipv4 = unique.filter { !$0.contains(":") }
+        let startsWithIPv6 = first.contains(":")
+        var ordered: [String] = []
+        while !ipv6.isEmpty || !ipv4.isEmpty {
+            if startsWithIPv6 {
+                if !ipv6.isEmpty { ordered.append(ipv6.removeFirst()) }
+                if !ipv4.isEmpty { ordered.append(ipv4.removeFirst()) }
+            } else {
+                if !ipv4.isEmpty { ordered.append(ipv4.removeFirst()) }
+                if !ipv6.isEmpty { ordered.append(ipv6.removeFirst()) }
+            }
+        }
+        return ordered
     }
 
     private static func start(_ connection: NWConnection) async throws {
@@ -357,11 +484,14 @@ enum HostsMappedHTTPClient {
             throw ClientError.invalidRequest("invalid method or request target")
         }
 
+        let headerHost = endpoint.originalHost.contains(":")
+            ? "[\(endpoint.originalHost)]" : endpoint.originalHost
+        let defaultPort = endpoint.usesTLS ? 443 : 80
         let hostHeader: String
-        if let explicitPort = url.port, explicitPort != 443 {
-            hostHeader = "\(endpoint.originalHost):\(explicitPort)"
+        if let explicitPort = url.port, explicitPort != defaultPort {
+            hostHeader = "\(headerHost):\(explicitPort)"
         } else {
-            hostHeader = endpoint.originalHost
+            hostHeader = headerHost
         }
 
         var lines = [

@@ -46,22 +46,7 @@ enum NtfyPublisher {
         if req.markdown { payload["markdown"] = true }
 
         let body = try JSONSerialization.data(withJSONObject: payload)
-        do {
-            try await sendPublish(url: url, body: body, subscription: subscription)
-        } catch {
-            guard EndpointResolver.shouldRetryWithResolvedAddress(for: url, error: error) else {
-                throw error
-            }
-            let endpoint = await EndpointResolver.resolvedEndpoint(for: url)
-            guard endpoint.hostHeader != nil else { throw error }
-            try await sendPublish(
-                url: endpoint.url,
-                hostHeader: endpoint.hostHeader,
-                pinnedHost: endpoint.pinnedHostname,
-                body: body,
-                subscription: subscription
-            )
-        }
+        try await sendPublish(url: url, body: body, subscription: subscription)
     }
 
     /// Quick `poll=1` request that verifies the server + topic + auth work.
@@ -79,67 +64,32 @@ enum NtfyPublisher {
             default: return .failure(NtfyError.http("HTTP \(statusCode)"))
             }
         } catch {
-            guard EndpointResolver.shouldRetryWithResolvedAddress(for: url, error: error) else {
-                return .failure(error)
-            }
-            let endpoint = await EndpointResolver.resolvedEndpoint(for: url)
-            guard endpoint.hostHeader != nil else { return .failure(error) }
-            do {
-                let statusCode = try await sendTestRequest(
-                    url: endpoint.url,
-                    hostHeader: endpoint.hostHeader,
-                    pinnedHost: endpoint.pinnedHostname,
-                    subscription: subscription
-                )
-                switch statusCode {
-                case 200...299: return .success(())
-                case 401, 403: return .failure(NtfyError.http("Authentication failed"))
-                case 404: return .failure(NtfyError.http("Topic or server not found"))
-                default: return .failure(NtfyError.http("HTTP \(statusCode)"))
-                }
-            } catch {
-                return .failure(error)
-            }
+            return .failure(error)
         }
     }
 
     private static func sendPublish(
         url: URL,
-        hostHeader: String? = nil,
-        pinnedHost: String? = nil,
         body: Data,
         subscription: Subscription
     ) async throws {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let hostHeader {
-            request.setValue(hostHeader, forHTTPHeaderField: "Host")
-        }
         if let auth = subscription.auth.authorizationHeader {
             request.setValue(auth, forHTTPHeaderField: "Authorization")
         }
         request.httpBody = body
 
-        if hostHeader == nil, pinnedHost == nil,
-           let endpoint = HostsMappedHTTPClient.endpoint(for: url) {
-            do {
-                let response = try await HostsMappedHTTPClient.request(request, endpoint: endpoint)
-                guard (200...299).contains(response.statusCode) else {
-                    throw NtfyError.http("Publish failed (HTTP \(response.statusCode))")
-                }
-                return
-            } catch let error as CancellationError {
-                throw error
-            } catch let error as NtfyError {
-                throw error
-            } catch {
-                // If the explicit hosts address is stale or temporarily down,
-                // retain the hostname URLSession path as a safe fallback.
+        if let endpoint = await HostsMappedHTTPClient.endpoint(for: url) {
+            let response = try await HostsMappedHTTPClient.request(request, endpoint: endpoint)
+            guard (200...299).contains(response.statusCode) else {
+                throw NtfyError.http("Publish failed (HTTP \(response.statusCode))")
             }
+            return
         }
 
-        let session = ProxyConfig.makeEphemeralSession(pinnedHost: pinnedHost)
+        let session = ProxyConfig.makeEphemeralSession()
         defer { session.finishTasksAndInvalidate() }
         let (_, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
@@ -150,32 +100,19 @@ enum NtfyPublisher {
 
     private static func sendTestRequest(
         url: URL,
-        hostHeader: String? = nil,
-        pinnedHost: String? = nil,
         subscription: Subscription
     ) async throws -> Int {
         var request = URLRequest(url: url)
         request.timeoutInterval = 15
-        if let hostHeader {
-            request.setValue(hostHeader, forHTTPHeaderField: "Host")
-        }
         if let auth = subscription.auth.authorizationHeader {
             request.setValue(auth, forHTTPHeaderField: "Authorization")
         }
 
-        if hostHeader == nil, pinnedHost == nil,
-           let endpoint = HostsMappedHTTPClient.endpoint(for: url) {
-            do {
-                return try await HostsMappedHTTPClient.request(request, endpoint: endpoint).statusCode
-            } catch let error as CancellationError {
-                throw error
-            } catch {
-                // Keep the normal hostname path as a fallback when a hosts
-                // mapping itself is stale or unreachable.
-            }
+        if let endpoint = await HostsMappedHTTPClient.endpoint(for: url) {
+            return try await HostsMappedHTTPClient.request(request, endpoint: endpoint).statusCode
         }
 
-        let session = ProxyConfig.makeEphemeralSession(pinnedHost: pinnedHost)
+        let session = ProxyConfig.makeEphemeralSession()
         defer { session.finishTasksAndInvalidate() }
         let (_, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else {

@@ -115,19 +115,9 @@ struct ProxyConfig {
     /// One-shot session for publish/test requests, honoring the proxy mode.
     /// Callers should invalidate it when done to avoid leaking sessions.
     ///
-    /// `pinnedHost` is set when the request dials a raw IP (to bypass a stale DNS
-    /// cache, see `EndpointResolver`): the TLS certificate is then evaluated
-    /// against that original hostname instead of the IP.
-    static func makeEphemeralSession(pinnedHost: String? = nil) -> URLSession {
+    static func makeEphemeralSession() -> URLSession {
         let config = URLSessionConfiguration.ephemeral
         current().apply(to: config)
-        if let pinnedHost {
-            return URLSession(
-                configuration: config,
-                delegate: HostnamePinningDelegate(expectedHost: pinnedHost),
-                delegateQueue: nil
-            )
-        }
         return URLSession(configuration: config)
     }
 }

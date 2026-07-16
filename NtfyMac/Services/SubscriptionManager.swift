@@ -17,6 +17,7 @@ final class SubscriptionManager: ObservableObject {
     @Published private(set) var subscriptions: [Subscription] = []
     @Published private(set) var messages: [StoredMessage] = []
     @Published private(set) var states: [UUID: ConnectionState] = [:]
+    @Published private(set) var diagnostics: [UUID: ConnectionDiagnostics] = [:]
     /// Subscriptions that are currently not connected (offline or stuck
     /// reconnecting). Drives the menu-bar trouble indicator. Sticky across a
     /// reconnect attempt so the brief `.connecting` phase doesn't clear it.
@@ -57,6 +58,9 @@ final class SubscriptionManager: ObservableObject {
         self.settings = settings
         self.subscriptions = store.loadSubscriptions()
         self.messages = store.loadMessages()
+        self.diagnostics = Dictionary(uniqueKeysWithValues: subscriptions.map {
+            ($0.id, ConnectionDiagnostics())
+        })
 
         NotificationService.shared.onActivated = { [weak self] subID, messageID in
             self?.markRead(subscriptionID: subID, messageID: messageID)
@@ -97,6 +101,10 @@ final class SubscriptionManager: ObservableObject {
         states[subscriptionID] ?? .idle
     }
 
+    func diagnostics(for subscriptionID: UUID) -> ConnectionDiagnostics {
+        diagnostics[subscriptionID] ?? ConnectionDiagnostics()
+    }
+
     var anyConnected: Bool {
         states.values.contains { $0.isConnected }
     }
@@ -116,6 +124,7 @@ final class SubscriptionManager: ObservableObject {
 
     func addSubscription(_ sub: Subscription) {
         subscriptions.append(sub)
+        diagnostics[sub.id] = ConnectionDiagnostics()
         persistSubscriptions()
         connect(sub)
     }
@@ -154,6 +163,7 @@ final class SubscriptionManager: ObservableObject {
         connections[id]?.stop()
         connections[id] = nil
         states[id] = nil
+        diagnostics[id] = nil
         offlineSubscriptionIDs.remove(id)
         everConnectedIDs.remove(id)
         notifiedOfflineIDs.remove(id)
@@ -174,6 +184,11 @@ final class SubscriptionManager: ObservableObject {
         for (_, connection) in connections { connection.restart() }
     }
 
+    func reconnect(_ subscriptionID: UUID) {
+        guard let sub = subscription(id: subscriptionID), !sub.isMuted else { return }
+        connect(sub, restart: true)
+    }
+
     private func connect(_ sub: Subscription, restart: Bool = false) {
         if sub.isMuted {
             connections[sub.id]?.stop()
@@ -192,6 +207,9 @@ final class SubscriptionManager: ObservableObject {
         connection.onStateChange = { [weak self] state in
             self?.handleStateChange(sub.id, state)
         }
+        connection.onDiagnosticsChange = { [weak self] details in
+            self?.diagnostics[sub.id] = details
+        }
         connection.onCursorInvalidated = { [weak self] in
             self?.clearCursor(for: sub.id)
         }
@@ -199,6 +217,7 @@ final class SubscriptionManager: ObservableObject {
             self?.ingest(message, for: sub.id)
         }
         connections[sub.id] = connection
+        diagnostics[sub.id] = connection.diagnostics
         connection.start()
     }
 
@@ -216,7 +235,7 @@ final class SubscriptionManager: ObservableObject {
             // Mirror the offline alert: announce recovery only if we actually
             // told the user it had gone offline.
             if notifiedOfflineIDs.remove(id) != nil,
-               settings.showNotifications,
+               settings.canDeliverNotification(),
                let sub = subscription(id: id), !sub.isMuted {
                 NotificationService.shared.presentConnectionRestored(subscription: sub)
             }
@@ -243,7 +262,7 @@ final class SubscriptionManager: ObservableObject {
         let freshlyOffline = !offlineSubscriptionIDs.contains(id)
         offlineSubscriptionIDs.insert(id)
         guard freshlyOffline, everConnectedIDs.contains(id),
-              settings.showNotifications,
+              settings.canDeliverNotification(),
               let sub = subscription(id: id), !sub.isMuted else { return }
         scheduleDropNotification(for: sub, reason: reason)
     }
@@ -256,7 +275,8 @@ final class SubscriptionManager: ObservableObject {
         dropNotifyTasks[sub.id] = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 10_000_000_000)
             guard let self, !Task.isCancelled else { return }
-            if self.offlineSubscriptionIDs.contains(sub.id) {
+            if self.offlineSubscriptionIDs.contains(sub.id),
+               self.settings.canDeliverNotification() {
                 NotificationService.shared.presentConnectionDrop(subscription: sub, reason: reason)
                 self.notifiedOfflineIDs.insert(sub.id)
             }
@@ -290,7 +310,7 @@ final class SubscriptionManager: ObservableObject {
         // Surface as a native notification when allowed.
         let sub = subscriptions[idx]
         let priority = message.resolvedPriority.rawValue
-        let allowed = settings.showNotifications
+        let allowed = settings.canDeliverNotification()
             && sub.notificationsEnabled
             && !sub.isMuted
             && priority >= settings.minNotificationPriority
@@ -356,6 +376,42 @@ final class SubscriptionManager: ObservableObject {
             messages.removeAll()
         }
         persistMessages()
+    }
+
+    // MARK: - Configuration backup
+
+    func exportConfiguration() throws -> Data {
+        try ConfigurationBackupService.encode(subscriptions: subscriptions, settings: settings)
+    }
+
+    /// Merge a portable backup into the current profile. Matching subscriptions
+    /// retain their local credentials and cursor; new subscriptions intentionally
+    /// start without credentials because secrets are never present in the file.
+    func importConfiguration(_ data: Data) throws -> ConfigurationImportSummary {
+        let backup = try ConfigurationBackupService.decode(data)
+        let mergeResult = ConfigurationBackupService.merge(
+            backup.subscriptions,
+            into: subscriptions
+        )
+
+        for connection in connections.values { connection.stop() }
+        for task in dropNotifyTasks.values { task.cancel() }
+        connections.removeAll()
+        dropNotifyTasks.removeAll()
+        states.removeAll()
+        offlineSubscriptionIDs.removeAll()
+        everConnectedIDs.removeAll()
+        notifiedOfflineIDs.removeAll()
+
+        subscriptions = mergeResult.subscriptions
+        diagnostics = Dictionary(uniqueKeysWithValues: mergeResult.subscriptions.map {
+            ($0.id, ConnectionDiagnostics())
+        })
+        backup.settings.apply(to: settings)
+        persistSubscriptions()
+        connectAll()
+
+        return mergeResult.summary
     }
 
     // MARK: - System monitoring

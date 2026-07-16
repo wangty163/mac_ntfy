@@ -10,6 +10,7 @@ import SwiftUI
 
 struct MenuPanelView: View {
     @EnvironmentObject var manager: SubscriptionManager
+    @EnvironmentObject var settings: AppSettings
     @Environment(\.openWindow) private var openWindow
     @State private var panelContentHeight: CGFloat = 0
 
@@ -162,6 +163,8 @@ struct MenuPanelView: View {
             settingsButton
                 .help("Settings")
 
+            notificationPauseMenu
+
             Spacer()
 
             Button {
@@ -185,6 +188,28 @@ struct MenuPanelView: View {
             SettingsWindow.focusSoon()
         } label: {
             Image(systemName: "gearshape")
+        }
+    }
+
+    private var notificationPauseMenu: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            Menu {
+                if settings.isTemporarilyPaused(at: context.date) {
+                    Button("Resume notifications") { settings.resumeNotifications() }
+                    Divider()
+                }
+                Button("Pause for 1 hour") { settings.pauseNotifications(for: 60 * 60) }
+                Button("Pause for 4 hours") { settings.pauseNotifications(for: 4 * 60 * 60) }
+                Button("Pause until tomorrow at 8:00") {
+                    settings.pauseUntilTomorrowMorning()
+                }
+            } label: {
+                Image(systemName: settings.isTemporarilyPaused(at: context.date)
+                      ? "bell.slash.fill" : "moon.zzz")
+                    .foregroundStyle(settings.isTemporarilyPaused(at: context.date) ? .orange : .primary)
+            }
+            .help(settings.isTemporarilyPaused(at: context.date)
+                  ? "Notifications temporarily paused" : "Pause notifications")
         }
     }
 

@@ -17,6 +17,7 @@
 		160F12A4A60C7ED0FAD7997C /* LaunchAtLogin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 184469FE2D8648CCF6F6CEED /* LaunchAtLogin.swift */; };
 		F441BA3D58988D2D07CFB9B1 /* NtfyConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28EE1E89FB8A318C5645A71E /* NtfyConnection.swift */; };
 		8F0000010000000000000001 /* HostsMappedHTTPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F0000020000000000000002 /* HostsMappedHTTPClient.swift */; };
+		8F0000030000000000000003 /* ConfigurationBackup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F0000040000000000000004 /* ConfigurationBackup.swift */; };
 		5A0C81D3F2E64B97A1C40002 /* ProxyConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0C81D3F2E64B97A1C40001 /* ProxyConfig.swift */; };
 		71F59A47332BD1EECF4CA2B8 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E925D1FB877AE292590B4892 /* NotificationService.swift */; };
 		53338D3231C64A002B406588 /* SubscriptionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 578B565C00D95F8B7CB3F75F /* SubscriptionManager.swift */; };
@@ -48,6 +49,7 @@
 		184469FE2D8648CCF6F6CEED /* LaunchAtLogin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchAtLogin.swift; sourceTree = "<group>"; };
 		28EE1E89FB8A318C5645A71E /* NtfyConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NtfyConnection.swift; sourceTree = "<group>"; };
 		8F0000020000000000000002 /* HostsMappedHTTPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostsMappedHTTPClient.swift; sourceTree = "<group>"; };
+		8F0000040000000000000004 /* ConfigurationBackup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigurationBackup.swift; sourceTree = "<group>"; };
 		5A0C81D3F2E64B97A1C40001 /* ProxyConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyConfig.swift; sourceTree = "<group>"; };
 		E925D1FB877AE292590B4892 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
 		578B565C00D95F8B7CB3F75F /* SubscriptionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionManager.swift; sourceTree = "<group>"; };
@@ -127,6 +129,7 @@
 				184469FE2D8648CCF6F6CEED /* LaunchAtLogin.swift */,
 				28EE1E89FB8A318C5645A71E /* NtfyConnection.swift */,
 				8F0000020000000000000002 /* HostsMappedHTTPClient.swift */,
+				8F0000040000000000000004 /* ConfigurationBackup.swift */,
 				5A0C81D3F2E64B97A1C40001 /* ProxyConfig.swift */,
 				E925D1FB877AE292590B4892 /* NotificationService.swift */,
 				578B565C00D95F8B7CB3F75F /* SubscriptionManager.swift */,
@@ -232,6 +235,7 @@
 				160F12A4A60C7ED0FAD7997C /* LaunchAtLogin.swift in Sources */,
 				F441BA3D58988D2D07CFB9B1 /* NtfyConnection.swift in Sources */,
 				8F0000010000000000000001 /* HostsMappedHTTPClient.swift in Sources */,
+				8F0000030000000000000003 /* ConfigurationBackup.swift in Sources */,
 				5A0C81D3F2E64B97A1C40002 /* ProxyConfig.swift in Sources */,
 				71F59A47332BD1EECF4CA2B8 /* NotificationService.swift in Sources */,
 				53338D3231C64A002B406588 /* SubscriptionManager.swift in Sources */,

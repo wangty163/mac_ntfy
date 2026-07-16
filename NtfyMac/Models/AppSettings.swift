@@ -19,6 +19,10 @@ final class AppSettings: ObservableObject {
         static let launchAtLogin = "launchAtLogin"
         static let showMenuBarCount = "showMenuBarCount"
         static let openWindowAtLaunch = "openWindowAtLaunch"
+        static let quietHoursEnabled = "quietHoursEnabled"
+        static let quietStartMinutes = "quietStartMinutes"
+        static let quietEndMinutes = "quietEndMinutes"
+        static let notificationsPausedUntil = "notificationsPausedUntil"
     }
 
     @Published var defaultServer: String {
@@ -49,6 +53,25 @@ final class AppSettings: ObservableObject {
         didSet {
             defaults.set(launchAtLogin, forKey: Keys.launchAtLogin)
             LaunchAtLogin.setEnabled(launchAtLogin)
+        }
+    }
+    @Published var quietHoursEnabled: Bool {
+        didSet { defaults.set(quietHoursEnabled, forKey: Keys.quietHoursEnabled) }
+    }
+    /// Minutes after midnight in the user's current calendar/time zone.
+    @Published var quietStartMinutes: Int {
+        didSet { defaults.set(quietStartMinutes, forKey: Keys.quietStartMinutes) }
+    }
+    @Published var quietEndMinutes: Int {
+        didSet { defaults.set(quietEndMinutes, forKey: Keys.quietEndMinutes) }
+    }
+    @Published var notificationsPausedUntil: Date? {
+        didSet {
+            if let notificationsPausedUntil {
+                defaults.set(notificationsPausedUntil, forKey: Keys.notificationsPausedUntil)
+            } else {
+                defaults.removeObject(forKey: Keys.notificationsPausedUntil)
+            }
         }
     }
 
@@ -90,6 +113,9 @@ final class AppSettings: ObservableObject {
             Keys.historyLimit: 200,
             Keys.showMenuBarCount: true,
             Keys.openWindowAtLaunch: true,
+            Keys.quietHoursEnabled: false,
+            Keys.quietStartMinutes: 22 * 60,
+            Keys.quietEndMinutes: 8 * 60,
         ])
         defaults.register(defaults: ProxyConfig.registrationDefaults)
         defaultServer = defaults.string(forKey: Keys.defaultServer) ?? "https://ntfy.sh"
@@ -100,6 +126,10 @@ final class AppSettings: ObservableObject {
         showMenuBarCount = defaults.bool(forKey: Keys.showMenuBarCount)
         openWindowAtLaunch = defaults.bool(forKey: Keys.openWindowAtLaunch)
         launchAtLogin = LaunchAtLogin.isEnabled
+        quietHoursEnabled = defaults.bool(forKey: Keys.quietHoursEnabled)
+        quietStartMinutes = defaults.integer(forKey: Keys.quietStartMinutes)
+        quietEndMinutes = defaults.integer(forKey: Keys.quietEndMinutes)
+        notificationsPausedUntil = defaults.object(forKey: Keys.notificationsPausedUntil) as? Date
 
         let proxy = ProxyConfig.current(defaults: defaults)
         proxyMode = proxy.mode
@@ -110,5 +140,43 @@ final class AppSettings: ObservableObject {
 
     private func notifyProxyChanged() {
         NotificationCenter.default.post(name: .ntfyProxyConfigChanged, object: nil)
+    }
+
+    func pauseNotifications(for interval: TimeInterval, from date: Date = Date()) {
+        notificationsPausedUntil = date.addingTimeInterval(interval)
+    }
+
+    func pauseUntilTomorrowMorning(from date: Date = Date(), calendar: Calendar = .current) {
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: date) ?? date.addingTimeInterval(86_400)
+        notificationsPausedUntil = calendar.date(
+            bySettingHour: 8,
+            minute: 0,
+            second: 0,
+            of: tomorrow
+        ) ?? tomorrow
+    }
+
+    func resumeNotifications() {
+        notificationsPausedUntil = nil
+    }
+
+    func isTemporarilyPaused(at date: Date = Date()) -> Bool {
+        guard let until = notificationsPausedUntil else { return false }
+        return until > date
+    }
+
+    func isInQuietHours(at date: Date = Date(), calendar: Calendar = .current) -> Bool {
+        guard quietHoursEnabled else { return false }
+        let components = calendar.dateComponents([.hour, .minute], from: date)
+        let current = (components.hour ?? 0) * 60 + (components.minute ?? 0)
+        let start = max(0, min(1_439, quietStartMinutes))
+        let end = max(0, min(1_439, quietEndMinutes))
+        guard start != end else { return false }
+        if start < end { return current >= start && current < end }
+        return current >= start || current < end
+    }
+
+    func canDeliverNotification(at date: Date = Date()) -> Bool {
+        showNotifications && !isTemporarilyPaused(at: date) && !isInQuietHours(at: date)
     }
 }

@@ -5,11 +5,15 @@
 
 import SwiftUI
 import UserNotifications
+import AppKit
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @EnvironmentObject var settings: AppSettings
     @EnvironmentObject var manager: SubscriptionManager
     @State private var authStatus: UNAuthorizationStatus = .notDetermined
+    @State private var backupStatus: String?
+    @State private var backupFailed = false
 
     private var authIsGranted: Bool {
         authStatus == .authorized || authStatus == .provisional
@@ -47,7 +51,7 @@ struct SettingsView: View {
             aboutTab
                 .tabItem { Label("About", systemImage: "info.circle") }
         }
-        .frame(width: 460, height: 440)
+        .frame(width: 460, height: 520)
         .toggleStyle(.switch)
         .tint(Theme.settingsControlTint)
         .onAppear { SettingsWindow.focusSoon() }
@@ -90,6 +94,23 @@ struct SettingsView: View {
                     manager.clearHistory()
                 }
             }
+            Section("Backup & Migration") {
+                HStack {
+                    Button("Export Configuration…", systemImage: "square.and.arrow.up") {
+                        exportConfiguration()
+                    }
+                    Button("Import & Merge…", systemImage: "square.and.arrow.down") {
+                        importConfiguration()
+                    }
+                }
+                Text("Backups include subscriptions and settings, but never passwords, access tokens, message history, or sync cursors. Existing credentials are preserved when importing a matching subscription.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if let backupStatus {
+                    Label(backupStatus, systemImage: backupFailed ? "xmark.circle" : "checkmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(backupFailed ? .red : .green)
+                }
+            }
         }
         .formStyle(.grouped)
     }
@@ -102,6 +123,41 @@ struct SettingsView: View {
             return "Follows the macOS system proxy. Note: system-proxy tools may buffer or drop the long-lived notification stream; if topics show as offline, switch to Direct or a custom proxy."
         case .custom:
             return "Routes all ntfy traffic through this proxy explicitly. Use a proxy port that supports streaming (e.g. Clash's mixed/SOCKS5 port). Changes reconnect automatically."
+        }
+    }
+
+    private func exportConfiguration() {
+        do {
+            let data = try manager.exportConfiguration()
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = [.json]
+            panel.canCreateDirectories = true
+            panel.nameFieldStringValue = "NtfyMac-Configuration-\(Date().formatted(.iso8601.year().month().day()))"
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            try data.write(to: url, options: .atomic)
+            backupFailed = false
+            backupStatus = "Configuration exported without credentials."
+        } catch {
+            backupFailed = true
+            backupStatus = error.localizedDescription
+        }
+    }
+
+    private func importConfiguration() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            let data = try Data(contentsOf: url)
+            let summary = try manager.importConfiguration(data)
+            backupFailed = false
+            backupStatus = summary.description
+        } catch {
+            backupFailed = true
+            backupStatus = error.localizedDescription
         }
     }
 
@@ -140,6 +196,41 @@ struct SettingsView: View {
                 Text("Lower-priority messages are still stored in history.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section("Pause notifications") {
+                TimelineView(.periodic(from: .now, by: 30)) { context in
+                    HStack {
+                        if settings.isTemporarilyPaused(at: context.date),
+                           let until = settings.notificationsPausedUntil {
+                            Label("Paused until \(until.formatted(date: .omitted, time: .shortened))",
+                                  systemImage: "bell.slash.fill")
+                                .foregroundStyle(.orange)
+                            Spacer()
+                            Button("Resume") { settings.resumeNotifications() }
+                        } else {
+                            Menu("Pause temporarily") {
+                                Button("For 1 hour") { settings.pauseNotifications(for: 60 * 60) }
+                                Button("For 4 hours") { settings.pauseNotifications(for: 4 * 60 * 60) }
+                                Button("Until tomorrow at 8:00") {
+                                    settings.pauseUntilTomorrowMorning()
+                                }
+                            }
+                        }
+                    }
+                }
+                Text("Messages continue to sync and remain unread; only macOS alerts are paused.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Quiet hours") {
+                Toggle("Enable quiet hours", isOn: $settings.quietHoursEnabled)
+                if settings.quietHoursEnabled {
+                    DatePicker("From", selection: quietTimeBinding(\.quietStartMinutes),
+                               displayedComponents: .hourAndMinute)
+                    DatePicker("Until", selection: quietTimeBinding(\.quietEndMinutes),
+                               displayedComponents: .hourAndMinute)
+                }
+                Text("Overnight ranges are supported. Messages are still stored during quiet hours.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section {
                 Button("Open System Notification Settings") {
                     if let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") {
@@ -154,6 +245,23 @@ struct SettingsView: View {
 
     private func refreshAuthStatus() {
         NotificationService.shared.currentAuthorizationStatus { authStatus = $0 }
+    }
+
+    private func quietTimeBinding(_ keyPath: ReferenceWritableKeyPath<AppSettings, Int>) -> Binding<Date> {
+        Binding(
+            get: {
+                let start = Calendar.current.startOfDay(for: Date())
+                return Calendar.current.date(
+                    byAdding: .minute,
+                    value: settings[keyPath: keyPath],
+                    to: start
+                ) ?? start
+            },
+            set: { date in
+                let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
+                settings[keyPath: keyPath] = (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
+            }
+        )
     }
 
     private var aboutTab: some View {

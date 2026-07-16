@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import Foundation
 
 /// The live state of a single topic connection.
 enum ConnectionState: Equatable {
@@ -44,5 +45,54 @@ enum ConnectionState: Equatable {
         case .disconnected: return .red
         case .idle: return .secondary
         }
+    }
+}
+
+/// Runtime-only connection details surfaced by the tiny status indicator in the
+/// subscriptions sidebar. Nothing here contains credentials or message bodies.
+struct ConnectionDiagnostics: Equatable {
+    var state: ConnectionState = .idle
+    var route = "Not connected"
+    var resolverSource = "—"
+    var resolvedAddresses: [String] = []
+    var remoteAddress: String?
+    var addressFamily: String?
+    var tlsServerName: String?
+    var connectionLatencyMilliseconds: Int?
+    var connectedAt: Date?
+    var lastEventAt: Date?
+    var lastKeepaliveAt: Date?
+    var lastMessageAt: Date?
+    var lastError: String?
+    var retryCount = 0
+    var nextRetryAt: Date?
+
+    func report(subscription: Subscription) -> String {
+        let formatter = ISO8601DateFormatter()
+        func timestamp(_ value: Date?) -> String {
+            value.map(formatter.string(from:)) ?? "—"
+        }
+
+        return [
+            "NtfyMac connection diagnostics",
+            "Subscription: \(subscription.name)",
+            "Server: \(subscription.normalizedBaseURL)",
+            "Topic: \(subscription.topic)",
+            "State: \(state.label)",
+            "Route: \(route)",
+            "Resolver: \(resolverSource)",
+            "Candidates: \(resolvedAddresses.isEmpty ? "—" : resolvedAddresses.joined(separator: ", "))",
+            "Remote: \(remoteAddress ?? "—")",
+            "Address family: \(addressFamily ?? "—")",
+            "TLS SNI: \(tlsServerName ?? "—")",
+            "Connect latency: \(connectionLatencyMilliseconds.map { "\($0) ms" } ?? "—")",
+            "Connected at: \(timestamp(connectedAt))",
+            "Last event: \(timestamp(lastEventAt))",
+            "Last keepalive: \(timestamp(lastKeepaliveAt))",
+            "Last message: \(timestamp(lastMessageAt))",
+            "Retries: \(retryCount)",
+            "Next retry: \(timestamp(nextRetryAt))",
+            "Last error: \(lastError ?? "—")",
+        ].joined(separator: "\n")
     }
 }

@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import AppKit
 
 struct SidebarView: View {
     @EnvironmentObject var manager: SubscriptionManager
@@ -31,8 +32,11 @@ struct SidebarView: View {
 
             Section("Subscriptions") {
                 ForEach(manager.subscriptions) { sub in
-                    NavigationLink(value: SidebarSelection.subscription(sub.id)) {
-                        SubscriptionRow(subscription: sub)
+                    HStack(spacing: 4) {
+                        NavigationLink(value: SidebarSelection.subscription(sub.id)) {
+                            SubscriptionRow(subscription: sub)
+                        }
+                        ConnectionStatusIndicator(subscription: sub)
                     }
                     .contextMenu {
                         Button("Edit", systemImage: "pencil") {
@@ -73,7 +77,6 @@ struct SubscriptionRow: View {
     let subscription: Subscription
 
     var body: some View {
-        let state = manager.state(for: subscription.id)
         let unread = manager.unreadCount(for: subscription.id)
         HStack(spacing: 8) {
             ZStack {
@@ -95,8 +98,131 @@ struct SubscriptionRow: View {
             if unread > 0 {
                 Chip(text: "\(unread)", tint: subscription.accentColor)
             }
-            StatusDot(color: state.tint, pulsing: state.isConnected)
         }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+/// The normal UI remains a tiny status dot. Clicking it reveals diagnostics in
+/// a transient popover, so connection details consume no permanent list space.
+struct ConnectionStatusIndicator: View {
+    @EnvironmentObject var manager: SubscriptionManager
+    let subscription: Subscription
+    @State private var showingDetails = false
+
+    var body: some View {
+        let state = manager.state(for: subscription.id)
+        Button {
+            showingDetails.toggle()
+        } label: {
+            StatusDot(color: state.tint, pulsing: state.isConnected)
+                .frame(width: 14, height: 14)
+                .contentShape(Rectangle())
+        }
+            .buttonStyle(.borderless)
+            .help("Connection details")
+            .accessibilityLabel("\(state.label). Show connection details")
+            .popover(isPresented: $showingDetails, arrowEdge: .trailing) {
+                ConnectionDiagnosticsPopover(subscription: subscription)
+                    .environmentObject(manager)
+            }
+    }
+}
+
+private struct ConnectionDiagnosticsPopover: View {
+    @EnvironmentObject var manager: SubscriptionManager
+    let subscription: Subscription
+    @State private var copied = false
+
+    private var details: ConnectionDiagnostics {
+        manager.diagnostics(for: subscription.id)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: details.state.symbol)
+                    .foregroundStyle(details.state.tint)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(subscription.name).font(.headline)
+                    Text(details.state.label)
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
+                diagnosticRow("Route", details.route)
+                diagnosticRow("Remote", remoteDescription)
+                diagnosticRow("Resolver", details.resolverSource)
+                diagnosticRow("TLS SNI", details.tlsServerName ?? "—")
+                diagnosticRow("Latency", details.connectionLatencyMilliseconds.map { "\($0) ms" } ?? "—")
+                diagnosticRow("Last event", relative(details.lastEventAt))
+                diagnosticRow("Keepalive", relative(details.lastKeepaliveAt))
+                if details.retryCount > 0 {
+                    diagnosticRow("Retries", "\(details.retryCount)")
+                }
+            }
+            .font(.caption)
+
+            if !details.resolvedAddresses.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Candidates")
+                        .font(.caption2).foregroundStyle(.secondary)
+                    Text(details.resolvedAddresses.joined(separator: "  ·  "))
+                        .font(.system(.caption2, design: .monospaced))
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            if let error = details.lastError, !details.state.isConnected {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Divider()
+            HStack {
+                Button("Reconnect", systemImage: "arrow.clockwise") {
+                    manager.reconnect(subscription.id)
+                }
+                .disabled(subscription.isMuted)
+                Spacer()
+                Button(copied ? "Copied" : "Copy Report", systemImage: copied ? "checkmark" : "doc.on.doc") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(
+                        details.report(subscription: subscription),
+                        forType: .string
+                    )
+                    copied = true
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(14)
+        .frame(width: 330)
+    }
+
+    @ViewBuilder
+    private func diagnosticRow(_ label: String, _ value: String) -> some View {
+        GridRow {
+            Text(label).foregroundStyle(.secondary)
+            Text(value).textSelection(.enabled)
+        }
+    }
+
+    private var remoteDescription: String {
+        guard let address = details.remoteAddress else { return "—" }
+        if let family = details.addressFamily { return "\(address) · \(family)" }
+        return address
+    }
+
+    private func relative(_ date: Date?) -> String {
+        guard let date else { return "—" }
+        return date.formatted(.relative(presentation: .named))
     }
 }
 

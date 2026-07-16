@@ -9,18 +9,20 @@
 //
 
 import Foundation
-import Security
 
 @MainActor
 final class NtfyConnection {
     let subscriptionID: UUID
     private(set) var subscription: Subscription
     private(set) var state: ConnectionState = .idle
+    private(set) var diagnostics = ConnectionDiagnostics()
 
     /// Called for every real `message` event (control events are filtered out).
     var onMessage: ((NtfyMessage) -> Void)?
     /// Called whenever the connection state changes (for UI badges).
     var onStateChange: ((ConnectionState) -> Void)?
+    /// Called when transport/address/event timing details change.
+    var onDiagnosticsChange: ((ConnectionDiagnostics) -> Void)?
     /// Called when the server rejects the persisted `since` cursor, usually
     /// because the message ID has fallen out of the server-side cache.
     var onCursorInvalidated: (() -> Void)?
@@ -30,16 +32,16 @@ final class NtfyConnection {
     init(subscription: Subscription) {
         self.subscriptionID = subscription.id
         self.subscription = subscription
+        diagnostics.tlsServerName = URL(string: subscription.normalizedBaseURL)?.scheme == "https"
+            ? subscription.serverHost
+            : nil
     }
 
     /// A fresh session per connection attempt. Reusing one session across
     /// reconnects can hand us a half-dead pooled connection after a network
     /// change, which then stalls until it times out.
     ///
-    /// `pinnedHost` is set when we connect to a raw IP (to bypass a stale DNS
-    /// cache, see `EndpointResolver`): the TLS certificate is then evaluated
-    /// against that original hostname instead of the IP we dialed.
-    private static func makeSession(pinnedHost: String? = nil) -> URLSession {
+    private static func makeSession() -> URLSession {
         let config = URLSessionConfiguration.ephemeral
         // ntfy sends a keepalive roughly every 45s; if we miss two in a row the
         // connection is dead — fail the request so the loop reconnects, instead
@@ -56,13 +58,6 @@ final class NtfyConnection {
         // like Clash in system-proxy mode break long-lived streams even when
         // their own rules say DIRECT. See ProxyConfig.
         ProxyConfig.current().apply(to: config)
-        if let pinnedHost {
-            return URLSession(
-                configuration: config,
-                delegate: HostnamePinningDelegate(expectedHost: pinnedHost),
-                delegateQueue: nil
-            )
-        }
         return URLSession(configuration: config)
     }
 
@@ -100,6 +95,7 @@ final class NtfyConnection {
 
         while !Task.isCancelled {
             do {
+                diagnostics.nextRetryAt = nil
                 setState(.connecting)
                 try await streamOnce()
                 // A normal stream end (server closed the connection) — reconnect
@@ -113,12 +109,14 @@ final class NtfyConnection {
                 // Drop the cursor and retry immediately so the app can connect
                 // instead of showing Offline forever while the server is fine.
                 onCursorInvalidated?()
+                recordFailure(error)
                 backoff = 1
                 continue
             } catch let error as NtfyError where error.isAuthFailure {
                 // Bad credentials won't fix themselves by retrying; stop and
                 // leave the error visible until the user edits the subscription
                 // (which triggers an explicit restart).
+                recordFailure(error)
                 setState(.disconnected(reason: error.localizedDescription))
                 return
             } catch {
@@ -126,6 +124,7 @@ final class NtfyConnection {
                 // URLSession rather than CancellationError; don't let a stale
                 // task overwrite the state a restarted connection just set.
                 if Task.isCancelled { break }
+                recordFailure(error)
                 setState(.disconnected(reason: error.localizedDescription))
             }
 
@@ -147,48 +146,17 @@ final class NtfyConnection {
             throw URLError(.badURL)
         }
 
-        // An explicit /etc/hosts entry is authoritative in Direct mode. Dial
-        // that address through Network.framework so HTTPS keeps the original
-        // hostname for TLS SNI/certificate validation. This avoids getting
-        // stuck on a stale/unreachable AAAA record while a browser quickly
-        // succeeds through the hosts-mapped IPv4 address.
-        if let endpoint = HostsMappedHTTPClient.endpoint(for: url) {
-            do {
-                try await stream(requestURL: url, through: endpoint)
-                return
-            } catch let error as CancellationError {
-                throw error
-            } catch let error as NtfyError {
-                // HTTP/auth/cursor errors came from the intended server; do not
-                // hide them by trying a different DNS endpoint.
-                throw error
-            } catch {
-                // A stale hosts entry or a transient direct-route failure should
-                // not strand the app. Fall through to the normal hostname path,
-                // which retains URLSession's own IPv4/IPv6 selection.
-            }
+        // In Direct mode, resolve all IPv4/IPv6 candidates and race them through
+        // Network.framework while retaining the original hostname for TLS SNI.
+        // `/etc/hosts` remains authoritative when it contains this hostname.
+        if let endpoint = await HostsMappedHTTPClient.endpoint(for: url) {
+            prepareDiagnostics(for: endpoint)
+            try await stream(requestURL: url, through: endpoint)
+            return
         }
 
-        do {
-            try await stream(url: url)
-        } catch {
-            // A connection-level failure on an unchanged hostname can mean a
-            // stale DNS cache or a host reachable only via /etc/hosts. Re-resolve
-            // the host ourselves and retry the resolved IP directly, as a
-            // fallback — the hostname attempt above is the normal path and keeps
-            // TLS SNI correct for reverse proxies, so we only reach here when it
-            // actually failed.
-            guard EndpointResolver.shouldRetryWithResolvedAddress(for: url, error: error) else {
-                throw error
-            }
-            let endpoint = await EndpointResolver.resolvedEndpoint(for: url)
-            guard endpoint.hostHeader != nil else { throw error }
-            try await stream(
-                url: endpoint.url,
-                hostHeader: endpoint.hostHeader,
-                pinnedHost: endpoint.pinnedHostname
-            )
-        }
+        prepareURLSessionDiagnostics(for: url)
+        try await stream(url: url)
     }
 
     private func stream(
@@ -206,6 +174,9 @@ final class NtfyConnection {
         try await HostsMappedHTTPClient.stream(
             request: request,
             endpoint: endpoint,
+            onConnected: { info in
+                self.recordConnected(info)
+            },
             onResponse: { response in
                 try self.validateHTTPStatus(response.statusCode)
             },
@@ -220,17 +191,14 @@ final class NtfyConnection {
         }
     }
 
-    private func stream(url: URL, hostHeader: String? = nil, pinnedHost: String? = nil) async throws {
+    private func stream(url: URL) async throws {
         var request = URLRequest(url: url)
         request.timeoutInterval = 100
-        if let hostHeader {
-            request.setValue(hostHeader, forHTTPHeaderField: "Host")
-        }
         if let auth = subscription.auth.authorizationHeader {
             request.setValue(auth, forHTTPHeaderField: "Authorization")
         }
 
-        let session = Self.makeSession(pinnedHost: pinnedHost)
+        let session = Self.makeSession()
         defer { session.invalidateAndCancel() }
 
         let (bytes, response) = try await session.bytes(for: request)
@@ -268,11 +236,15 @@ final class NtfyConnection {
 
         switch event.event {
         case .open:
+            diagnostics.connectedAt = Date()
+            recordEvent(.open)
             setState(.connected)
         case .keepalive:
+            recordEvent(.keepalive)
             // Connection is healthy; make sure UI reflects "connected".
             if !state.isConnected { setState(.connected) }
         case .message:
+            recordEvent(.message)
             if !state.isConnected { setState(.connected) }
             onMessage?(event)
         case .pollRequest, .messageDelete, .messageClear, .unknown:
@@ -282,7 +254,84 @@ final class NtfyConnection {
 
     private func setState(_ newState: ConnectionState) {
         state = newState
+        diagnostics.state = newState
+        switch newState {
+        case .idle:
+            diagnostics.nextRetryAt = nil
+        case .connected:
+            diagnostics.retryCount = 0
+            diagnostics.nextRetryAt = nil
+            diagnostics.lastError = nil
+        case .reconnecting(let nextAttempt):
+            diagnostics.nextRetryAt = nextAttempt
+        case .disconnected(let reason):
+            diagnostics.lastError = reason
+        case .connecting:
+            diagnostics.remoteAddress = nil
+            diagnostics.addressFamily = nil
+            diagnostics.connectionLatencyMilliseconds = nil
+        }
         onStateChange?(newState)
+        publishDiagnostics()
+    }
+
+    private enum DiagnosticEvent {
+        case open, keepalive, message
+    }
+
+    private func recordEvent(_ event: DiagnosticEvent) {
+        let now = Date()
+        diagnostics.lastEventAt = now
+        switch event {
+        case .open: break
+        case .keepalive: diagnostics.lastKeepaliveAt = now
+        case .message: diagnostics.lastMessageAt = now
+        }
+        publishDiagnostics()
+    }
+
+    private func recordFailure(_ error: Error) {
+        diagnostics.retryCount += 1
+        diagnostics.lastError = error.localizedDescription
+        publishDiagnostics()
+    }
+
+    private func prepareDiagnostics(for endpoint: HostsMappedHTTPClient.Endpoint) {
+        diagnostics.route = "Direct · Happy Eyeballs"
+        diagnostics.resolverSource = endpoint.resolverSource.rawValue
+        diagnostics.resolvedAddresses = endpoint.candidates.map(\.address)
+        diagnostics.tlsServerName = endpoint.usesTLS
+            && !EndpointResolver.isIPAddress(endpoint.originalHost)
+            ? endpoint.originalHost : nil
+        publishDiagnostics()
+    }
+
+    private func recordConnected(_ info: HostsMappedHTTPClient.ConnectionInfo) {
+        diagnostics.remoteAddress = info.address
+        diagnostics.addressFamily = info.family
+        diagnostics.resolverSource = info.resolverSource
+        diagnostics.resolvedAddresses = info.candidates
+        diagnostics.tlsServerName = info.tlsServerName
+        diagnostics.connectionLatencyMilliseconds = info.latencyMilliseconds
+        publishDiagnostics()
+    }
+
+    private func prepareURLSessionDiagnostics(for url: URL) {
+        let proxy = ProxyConfig.current()
+        diagnostics.route = "\(proxy.mode.label) · URLSession"
+        diagnostics.resolverSource = proxy.mode == .direct
+            ? "System resolver fallback"
+            : "Managed by \(proxy.mode.label.lowercased())"
+        diagnostics.resolvedAddresses = []
+        diagnostics.remoteAddress = nil
+        diagnostics.addressFamily = nil
+        diagnostics.tlsServerName = url.scheme?.lowercased() == "https" ? url.host : nil
+        diagnostics.connectionLatencyMilliseconds = nil
+        publishDiagnostics()
+    }
+
+    private func publishDiagnostics() {
+        onDiagnosticsChange?(diagnostics)
     }
 }
 
@@ -313,95 +362,38 @@ enum NtfyError: LocalizedError {
     }
 }
 
-/// Resolves a request's hostname to a concrete IP and rewrites the request to
-/// dial that IP directly, while keeping the original HTTP `Host` header (and, for
-/// HTTPS, validating the certificate against the original hostname).
-///
-/// Two problems this solves:
-///   * **Stale DNS cache.** When a server's IP changes but its hostname does
-///     not (dynamic DNS / failover), URLSession's process-wide DNS cache keeps
-///     handing back the old, dead IP, so reconnects fail indefinitely even
-///     though a browser — a separate process — connects fine. A fresh
-///     `getaddrinfo` query honors the record TTL and returns the current IP.
-///   * **`/etc/hosts` overrides.** Some self-hosted ntfy setups are only
-///     reachable through a local hosts entry and otherwise fail with
-///     `NSURLErrorNetworkConnectionLost` even though a browser can open the URL.
-///
-/// `/etc/hosts` takes precedence (it is an explicit user override); otherwise we
-/// fall back to a fresh DNS lookup.
+/// Resolves the complete address set used by the direct Happy Eyeballs path.
+/// `/etc/hosts` is authoritative; otherwise a fresh `getaddrinfo` lookup avoids
+/// reusing URLSession's process-wide DNS/connection cache after network changes.
 enum EndpointResolver {
-    struct ResolvedEndpoint {
-        var url: URL
-        /// Original `host[:port]` to send as the `Host` header when we dial an IP.
-        var hostHeader: String?
-        /// Original hostname to validate the TLS certificate against (HTTPS only).
-        var pinnedHostname: String?
+    struct CandidateResolution {
+        let addresses: [String]
+        let source: HostsMappedHTTPClient.ResolverSource
     }
 
-    /// Whether a failed request is worth retrying against a freshly-resolved IP.
-    ///
-    /// Restricted to **plain HTTP** on a hostname. Dialing a raw IP keeps the
-    /// `Host` header but drops TLS SNI — an IP literal can't appear in SNI — so
-    /// an HTTPS reverse proxy that selects its certificate or backend by SNI
-    /// would route the request to the wrong place. HTTPS therefore always stays
-    /// on the hostname, which already resolves through `/etc/hosts` via the
-    /// system resolver — the same path the browser uses to reach the server.
-    static func shouldRetryWithResolvedAddress(for url: URL, error: Error) -> Bool {
-        guard url.scheme?.lowercased() == "http",
-              let host = url.host, !isIPAddress(host) else { return false }
-        guard let urlError = error as? URLError else { return false }
-        switch urlError.code {
-        case .networkConnectionLost, .cannotFindHost, .cannotConnectToHost, .timedOut, .dnsLookupFailed:
-            return true
-        default:
-            return false
+    /// Resolves all usable addresses for Happy Eyeballs. An explicit hosts entry
+    /// is authoritative; otherwise `getaddrinfo` supplies the current system-DNS
+    /// ordering. Literal addresses bypass resolution entirely.
+    static func resolveCandidates(for host: String) async -> CandidateResolution {
+        if isIPAddress(host) {
+            return CandidateResolution(addresses: [host], source: .literal)
         }
-    }
-
-    /// Resolve the URL's host to an IP, bypassing URLSession's DNS cache. Prefers
-    /// an `/etc/hosts` override, otherwise performs a fresh `getaddrinfo` lookup.
-    static func resolvedEndpoint(for url: URL) async -> ResolvedEndpoint {
-        let unresolved = ResolvedEndpoint(url: url, hostHeader: nil, pinnedHostname: nil)
-        guard let host = url.host, !isIPAddress(host) else { return unresolved }
-
-        // `await` can't appear inside the `??` autoclosure, so fall back explicitly.
-        var address = hostsAddress(for: host)
-        if address == nil {
-            address = await freshAddress(for: host)
+        let mapped = hostsAddresses(for: host)
+        if !mapped.isEmpty {
+            return CandidateResolution(addresses: mapped, source: .hosts)
         }
-        guard let address else { return unresolved }
-        return endpoint(for: url, host: host, dialing: address) ?? unresolved
+        return CandidateResolution(addresses: await freshAddresses(for: host), source: .dns)
     }
 
-    /// Build an endpoint that dials `address` directly while preserving the
-    /// original host for the `Host` header and (for HTTPS) certificate checks.
-    private static func endpoint(for url: URL, host: String, dialing address: String) -> ResolvedEndpoint? {
-        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
-            return nil
-        }
-        components.host = address
-        guard let resolvedURL = components.url else { return nil }
-
-        return ResolvedEndpoint(
-            url: resolvedURL,
-            hostHeader: hostHeader(for: url, originalHost: host),
-            // Only HTTPS needs certificate re-evaluation; plain HTTP does not.
-            pinnedHostname: url.scheme?.lowercased() == "https" ? host : nil
-        )
-    }
-
-    /// A fresh DNS lookup via `getaddrinfo`, run off the main thread. Unlike
-    /// URLSession's cache, this re-queries the system resolver, so a changed IP
-    /// behind an unchanged hostname is picked up once the record's TTL expires.
-    private static func freshAddress(for host: String) async -> String? {
+    private static func freshAddresses(for host: String) async -> [String] {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
-                continuation.resume(returning: blockingResolve(host))
+                continuation.resume(returning: blockingResolveAll(host))
             }
         }
     }
 
-    private static func blockingResolve(_ host: String) -> String? {
+    private static func blockingResolveAll(_ host: String) -> [String] {
         var hints = addrinfo(
             ai_flags: 0,
             ai_family: AF_UNSPEC,
@@ -413,11 +405,10 @@ enum EndpointResolver {
             ai_next: nil
         )
         var result: UnsafeMutablePointer<addrinfo>?
-        guard getaddrinfo(host, nil, &hints, &result) == 0, result != nil else { return nil }
+        guard getaddrinfo(host, nil, &hints, &result) == 0, result != nil else { return [] }
         defer { freeaddrinfo(result) }
 
-        var ipv4: String?
-        var ipv6: String?
+        var addresses: [String] = []
         var node = result
         while let current = node {
             let info = current.pointee
@@ -426,23 +417,22 @@ enum EndpointResolver {
                            &buffer, socklen_t(buffer.count),
                            nil, 0, NI_NUMERICHOST) == 0 {
                 let address = String(cString: buffer)
-                if info.ai_family == AF_INET {
-                    if ipv4 == nil { ipv4 = address }
-                } else if info.ai_family == AF_INET6 {
-                    if ipv6 == nil { ipv6 = address }
+                if (info.ai_family == AF_INET || info.ai_family == AF_INET6),
+                   !addresses.contains(address) {
+                    addresses.append(address)
                 }
             }
             node = info.ai_next
         }
-        // Prefer IPv4 to sidestep IPv6 literal/bracketing edge cases in URLs.
-        return ipv4 ?? ipv6
+        return addresses
     }
 
-    static func hostsAddress(for host: String) -> String? {
+    static func hostsAddresses(for host: String) -> [String] {
         guard let contents = try? String(contentsOfFile: "/etc/hosts", encoding: .utf8) else {
-            return nil
+            return []
         }
         let wanted = host.lowercased()
+        var addresses: [String] = []
 
         for rawLine in contents.components(separatedBy: .newlines) {
             let line = rawLine.split(separator: "#", maxSplits: 1).first.map(String.init) ?? ""
@@ -451,22 +441,12 @@ enum EndpointResolver {
 
             let address = fields[0]
             for alias in fields.dropFirst() where alias.lowercased() == wanted {
-                return address
+                if isIPAddress(address), !addresses.contains(address) {
+                    addresses.append(address)
+                }
             }
         }
-        return nil
-    }
-
-    private static func hostHeader(for url: URL, originalHost: String) -> String {
-        guard let port = url.port, !isDefaultPort(port, scheme: url.scheme) else {
-            return originalHost
-        }
-        return "\(originalHost):\(port)"
-    }
-
-    private static func isDefaultPort(_ port: Int, scheme: String?) -> Bool {
-        (scheme?.lowercased() == "http" && port == 80)
-            || (scheme?.lowercased() == "https" && port == 443)
+        return addresses
     }
 
     static func isIPAddress(_ host: String) -> Bool {
@@ -507,37 +487,5 @@ private struct NDJSONLineBuffer {
             handle(string)
         }
         buffer.removeAll()
-    }
-}
-
-/// Validates the TLS server certificate against an expected hostname rather than
-/// the address URLSession actually connected to. Used when `EndpointResolver`
-/// dials a raw IP to bypass a stale DNS cache: without this, URLSession would
-/// evaluate the certificate against the IP and reject an otherwise-valid cert.
-final class HostnamePinningDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
-    private let expectedHost: String
-
-    init(expectedHost: String) {
-        self.expectedHost = expectedHost
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        didReceive challenge: URLAuthenticationChallenge,
-        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
-    ) {
-        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
-              let serverTrust = challenge.protectionSpace.serverTrust else {
-            completionHandler(.performDefaultHandling, nil)
-            return
-        }
-
-        // Re-evaluate the presented chain against the original hostname.
-        SecTrustSetPolicies(serverTrust, SecPolicyCreateSSL(true, expectedHost as CFString))
-        if SecTrustEvaluateWithError(serverTrust, nil) {
-            completionHandler(.useCredential, URLCredential(trust: serverTrust))
-        } else {
-            completionHandler(.cancelAuthenticationChallenge, nil)
-        }
     }
 }

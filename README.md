@@ -30,8 +30,16 @@ in the background and reconnects automatically.
 - **Reliable background delivery** — long-lived streaming connections with
   exponential-backoff reconnect, plus automatic reconnect when the network
   returns or the Mac wakes from sleep. Missed messages are recovered via the
-  `since` cursor.
+  `since` cursor. Direct connections race IPv4/IPv6 candidates with Happy
+  Eyeballs while preserving the hostname for TLS SNI.
+- **On-demand connection diagnostics** — the tiny status dot opens the real
+  remote IP, address family, resolver source, TLS SNI, latency, keepalive
+  timing, retries and the last error.
 - **Per-topic filters** — only get notified for chosen priorities / tags.
+- **Quiet hours and temporary pause** — suppress macOS alerts without stopping
+  message synchronization or changing unread state.
+- **Configuration backup and migration** — export/import subscriptions and
+  settings without passwords, tokens, history or sync cursors in the file.
 - **Publish messages** to a topic right from the app (title, priority, tags,
   click URL, scheduled delivery, attachments, Markdown).
 - **Launch at login** via the modern `SMAppService` API.
@@ -131,13 +139,11 @@ Lessons learned from debugging this case:
 - Treat “browser works” as a hint, not proof that every HTTP client resolves and
   routes the hostname the same way. Always check whether `/etc/hosts`, VPN,
   proxy, or split-DNS rules are involved.
-- In **Direct** mode, treat an explicit `/etc/hosts` mapping as authoritative.
-  The app dials that address with Network.framework while separately retaining
-  the original hostname for TLS SNI, certificate verification, and the HTTP
-  `Host` header. This avoids both failure modes: a stale/unreachable DNS AAAA
-  record cannot strand the request, and connecting by IP does not lose SNI.
-- If the hosts-mapped connection itself is stale or unavailable, fall back to
-  the normal hostname `URLSession` path so DNS-based recovery still works.
+- In **Direct** mode, resolve a fresh set of candidate addresses for every
+  attempt and race IPv4/IPv6 connections 250 ms apart. An explicit
+  `/etc/hosts` mapping is authoritative; otherwise current system-DNS
+  candidates are used. The winning socket retains the original hostname for
+  TLS SNI, certificate verification, and the HTTP `Host` header.
 - Apply the same fallback to all ntfy network paths: subscription streams, the
   add/edit subscription **Test** button, and publishing. Otherwise one action can
   appear fixed while another still fails.
@@ -157,10 +163,14 @@ long-lived client can remain stuck on one unreachable address.
 
 Keep the configured server URL on the hostname, including any non-standard port
 (e.g. `https://ntfy.example.com:8443`). If `/etc/hosts` contains that hostname,
-the app connects to its mapped address immediately in Direct mode while keeping
-the hostname for TLS SNI and certificate checks. The app also watches
-`/etc/hosts` and reconnects when it changes. Without an explicit hosts mapping,
-the normal hostname resolver path remains in use.
+the app treats those addresses as authoritative while keeping the hostname for
+TLS SNI and certificate checks. The app also watches `/etc/hosts` and reconnects
+when it changes. Without a hosts mapping, it freshly resolves all system-DNS
+candidates and races the two address families.
+
+Click the small status dot beside a subscription to see which address actually
+won, whether it came from `/etc/hosts` or DNS, and the most recent keepalive or
+retry error. **Copy Report** produces a credential-free diagnostic summary.
 
 ### Topics go offline while Clash/Surge (system proxy) is running
 
@@ -195,7 +205,7 @@ NtfyMac/
 │  └─ AppSettings.swift      user preferences (UserDefaults)
 ├─ Services/
 │  ├─ NtfyConnection.swift   one streaming /json connection + auto-reconnect
-│  ├─ HostsMappedHTTPClient.swift  hosts-IP HTTPS transport with original TLS SNI
+│  ├─ HostsMappedHTTPClient.swift  direct HTTP transport + IPv4/IPv6 racing
 │  ├─ ProxyConfig.swift      explicit proxy mode (direct/system/custom)
 │  ├─ SubscriptionManager.swift   owns subscriptions, history, monitors net/sleep
 │  ├─ NotificationService.swift   UserNotifications bridge
