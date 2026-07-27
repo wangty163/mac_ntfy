@@ -17,6 +17,7 @@ xcrun swiftc -parse-as-library -target "$TARGET" \
   NtfyMac/Services/ProxyConfig.swift \
   NtfyMac/Services/HostsMappedHTTPClient.swift \
   NtfyMac/Services/NtfyConnection.swift \
+  NtfyMac/Services/NotificationService.swift \
   NtfyMac/Services/ConfigurationBackup.swift \
   NtfyMac/Views/DesignSystem.swift \
   Tests/SmokeHarness.swift \

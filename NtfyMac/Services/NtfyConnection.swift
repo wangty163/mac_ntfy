@@ -171,21 +171,21 @@ final class NtfyConnection {
         }
 
         var lines = NDJSONLineBuffer()
-        try await HostsMappedHTTPClient.stream(
+        let response = try await HostsMappedHTTPClient.openStream(
             request: request,
-            endpoint: endpoint,
-            onConnected: { info in
-                self.recordConnected(info)
-            },
-            onResponse: { response in
-                try self.validateHTTPStatus(response.statusCode)
-            },
-            onBody: { data in
-                lines.append(data) { line in
-                    self.handle(line: line)
-                }
-            }
+            endpoint: endpoint
         )
+        defer { response.cancel() }
+
+        recordConnected(response.connectionInfo)
+        try validateHTTPStatus(response.head.statusCode)
+
+        while let data = try await response.nextBodyChunk() {
+            try Task.checkCancellation()
+            lines.append(data) { line in
+                handle(line: line)
+            }
+        }
         lines.finish { line in
             handle(line: line)
         }
