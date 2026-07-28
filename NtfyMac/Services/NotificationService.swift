@@ -10,6 +10,51 @@ import Foundation
 import UserNotifications
 import AppKit
 
+struct NativeNotificationText: Equatable {
+    let title: String
+    let body: String
+}
+
+enum NativeNotificationFormatter {
+    static func format(topic: String, title: String, body: String) -> NativeNotificationText {
+        let topicLine = "#\(topic)"
+        let renderedBody: String
+        if body.isEmpty {
+            renderedBody = topicLine
+        } else if body.hasSuffix("\n") {
+            renderedBody = body + topicLine
+        } else {
+            renderedBody = "\(body)\n\(topicLine)"
+        }
+
+        return NativeNotificationText(
+            title: title,
+            body: renderedBody
+        )
+    }
+
+    static func message(
+        _ message: NtfyMessage,
+        subscription: Subscription
+    ) -> NativeNotificationText {
+        let emojiPrefix = message.emojiTags.joined()
+        let baseTitle = message.displayTitle(fallbackTopic: subscription.name)
+        let title = emojiPrefix.isEmpty ? baseTitle : "\(emojiPrefix) \(baseTitle)"
+
+        var body = message.message ?? ""
+        if !message.labelTags.isEmpty {
+            let chips = message.labelTags.map { "#\($0)" }.joined(separator: " ")
+            body += body.isEmpty ? chips : "\n\(chips)"
+        }
+        if let attachment = message.attachment {
+            let size = attachment.humanSize.map { " · \($0)" } ?? ""
+            body += body.isEmpty ? "📎 \(attachment.name)\(size)" : "\n📎 \(attachment.name)\(size)"
+        }
+
+        return format(topic: subscription.name, title: title, body: body)
+    }
+}
+
 @MainActor
 final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationService()
@@ -40,25 +85,9 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
                  subscription: Subscription,
                  playSound: Bool) {
         let content = UNMutableNotificationContent()
-
-        // Title: emoji tags + (custom title or topic name).
-        let emojiPrefix = message.emojiTags.joined()
-        let baseTitle = message.displayTitle(fallbackTopic: subscription.name)
-        content.title = emojiPrefix.isEmpty ? baseTitle : "\(emojiPrefix) \(baseTitle)"
-
-        // Subtitle shows where it came from.
-        content.subtitle = subscription.name
-
-        var body = message.message ?? ""
-        if !message.labelTags.isEmpty {
-            let chips = message.labelTags.map { "#\($0)" }.joined(separator: " ")
-            body += body.isEmpty ? chips : "\n\(chips)"
-        }
-        if let attachment = message.attachment {
-            let size = attachment.humanSize.map { " · \($0)" } ?? ""
-            body += body.isEmpty ? "📎 \(attachment.name)\(size)" : "\n📎 \(attachment.name)\(size)"
-        }
-        content.body = body
+        let text = NativeNotificationFormatter.message(message, subscription: subscription)
+        content.title = text.title
+        content.body = text.body
 
         // Group notifications from the same subscription together in
         // Notification Center.
@@ -98,11 +127,16 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     /// repeat drop replaces the previous alert rather than stacking.
     func presentConnectionDrop(subscription: Subscription, reason: String) {
         let content = UNMutableNotificationContent()
-        content.title = "Subscription offline"
-        content.subtitle = subscription.name
-        content.body = reason.isEmpty
+        let body = reason.isEmpty
             ? "The connection to the server was lost. Reconnecting…"
             : reason
+        let text = NativeNotificationFormatter.format(
+            topic: subscription.name,
+            title: "Subscription offline",
+            body: body
+        )
+        content.title = text.title
+        content.body = text.body
         content.interruptionLevel = .active
         content.threadIdentifier = "connection-\(subscription.id.uuidString)"
         content.userInfo = [
@@ -132,9 +166,13 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         )
 
         let content = UNMutableNotificationContent()
-        content.title = "Subscription back online"
-        content.subtitle = subscription.name
-        content.body = "The connection to the server was restored."
+        let text = NativeNotificationFormatter.format(
+            topic: subscription.name,
+            title: "Subscription back online",
+            body: "The connection to the server was restored."
+        )
+        content.title = text.title
+        content.body = text.body
         content.interruptionLevel = .active
         content.threadIdentifier = "connection-\(subscription.id.uuidString)"
         content.userInfo = [

@@ -15,29 +15,32 @@ struct SidebarView: View {
     var body: some View {
         List(selection: $selection) {
             Section {
-                NavigationLink(value: SidebarSelection.all) {
-                    Label {
-                        HStack {
-                            Text("All Messages")
-                            Spacer()
-                            if manager.totalUnread > 0 {
-                                Chip(text: "\(manager.totalUnread)", tint: .accentColor)
-                            }
+                Label {
+                    HStack {
+                        Text("All Messages")
+                        Spacer()
+                        if manager.totalUnread > 0 {
+                            Chip(text: "\(manager.totalUnread)", tint: .accentColor)
                         }
-                    } icon: {
-                        Image(systemName: "tray.full")
                     }
+                } icon: {
+                    Image(systemName: "tray.full")
                 }
+                .tag(SidebarSelection.all)
             }
 
             Section("Subscriptions") {
                 ForEach(manager.subscriptions) { sub in
                     HStack(spacing: 4) {
-                        NavigationLink(value: SidebarSelection.subscription(sub.id)) {
-                            SubscriptionRow(subscription: sub)
-                        }
+                        SubscriptionRow(subscription: sub)
                         ConnectionStatusIndicator(subscription: sub)
                     }
+                    // Keep the selectable value on the List row itself. A
+                    // NavigationLink nested beside the diagnostics button is
+                    // not treated as the row's selection on macOS, so the
+                    // highlight can move while the bound content stays on the
+                    // previous subscription.
+                    .tag(SidebarSelection.subscription(sub.id))
                     .contextMenu {
                         Button("Edit", systemImage: "pencil") {
                             editing = sub

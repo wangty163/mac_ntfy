@@ -18,19 +18,19 @@ import Network
 import Security
 
 enum HostsMappedHTTPClient {
-    enum ResolverSource: String {
+    enum ResolverSource: String, Sendable {
         case hosts = "/etc/hosts"
         case dns = "System DNS"
         case literal = "Literal address"
     }
 
-    struct Candidate: Equatable {
+    struct Candidate: Equatable, Sendable {
         let address: String
 
         var family: String { address.contains(":") ? "IPv6" : "IPv4" }
     }
 
-    struct Endpoint {
+    struct Endpoint: Sendable {
         let candidates: [Candidate]
         let port: UInt16
         let originalHost: String
@@ -38,7 +38,7 @@ enum HostsMappedHTTPClient {
         let resolverSource: ResolverSource
     }
 
-    struct ConnectionInfo: Equatable {
+    struct ConnectionInfo: Equatable, Sendable {
         let address: String
         let family: String
         let resolverSource: String
@@ -47,10 +47,101 @@ enum HostsMappedHTTPClient {
         let latencyMilliseconds: Int
     }
 
-    struct ResponseHead {
+    struct ResponseHead: Sendable {
         let statusCode: Int
         let headers: [String: String]
         var connectionInfo: ConnectionInfo? = nil
+    }
+
+    /// Owns a live direct HTTP response and exposes its decoded body as an
+    /// async pull stream. The transport never invokes application callbacks:
+    /// callers regain their actor after each `await` and process the returned
+    /// bytes in their own isolation domain.
+    actor StreamingResponse {
+        nonisolated let head: ResponseHead
+        nonisolated let connectionInfo: ConnectionInfo
+
+        private nonisolated let connection: NWConnection
+        private var decoder: BodyDecoder
+        private var pendingChunks: [Data] = []
+        private var pendingIndex = 0
+        private var reachedEnd = false
+
+        fileprivate init(
+            connection: NWConnection,
+            connectionInfo: ConnectionInfo,
+            head: ResponseHead,
+            initialBody: Data
+        ) throws {
+            var decoder = try BodyDecoder(headers: head.headers)
+            let initialChunks = initialBody.isEmpty
+                ? []
+                : try decoder.append(initialBody)
+
+            self.connection = connection
+            self.connectionInfo = connectionInfo
+            self.head = head
+            self.decoder = decoder
+            self.pendingChunks = initialChunks
+            self.reachedEnd = decoder.isFinished
+        }
+
+        /// Returns one decoded HTTP body part at a time while preserving
+        /// backpressure: the socket is read again only after the caller asks for
+        /// another part. HTTP chunk framing is never exposed to the caller.
+        func nextBodyChunk() async throws -> Data? {
+            if let pending = dequeuePendingChunk() {
+                return pending
+            }
+            if reachedEnd {
+                connection.cancel()
+                return nil
+            }
+
+            do {
+                while true {
+                    try Task.checkCancellation()
+                    let part = try await HostsMappedHTTPClient.receive(from: connection)
+                    if !part.data.isEmpty {
+                        pendingChunks.append(contentsOf: try decoder.append(part.data))
+                    }
+                    if part.isComplete {
+                        pendingChunks.append(contentsOf: try decoder.finishAtEOF())
+                    }
+                    reachedEnd = decoder.isFinished
+
+                    if let pending = dequeuePendingChunk() {
+                        return pending
+                    }
+                    if reachedEnd {
+                        connection.cancel()
+                        return nil
+                    }
+                }
+            } catch {
+                connection.cancel()
+                throw error
+            }
+        }
+
+        nonisolated func cancel() {
+            connection.cancel()
+        }
+
+        private func dequeuePendingChunk() -> Data? {
+            guard pendingIndex < pendingChunks.count else {
+                pendingChunks.removeAll(keepingCapacity: true)
+                pendingIndex = 0
+                return nil
+            }
+            let chunk = pendingChunks[pendingIndex]
+            pendingIndex += 1
+            return chunk
+        }
+
+        deinit {
+            connection.cancel()
+        }
     }
 
     enum ClientError: LocalizedError {
@@ -111,41 +202,29 @@ enum HostsMappedHTTPClient {
         )
     }
 
-    /// Runs a long-lived response and emits decoded HTTP body bytes. HTTP/1.1
-    /// chunk framing is removed before body data reaches the caller.
-    static func stream(
+    /// Opens a long-lived response. Returning a pull-based response object keeps
+    /// network execution separate from application actor state and preserves
+    /// backpressure without callback-based isolation leaks.
+    static func openStream(
         request: URLRequest,
-        endpoint: Endpoint,
-        onConnected: (ConnectionInfo) -> Void = { _ in },
-        onResponse: (ResponseHead) throws -> Void,
-        onBody: (Data) -> Void
-    ) async throws {
+        endpoint: Endpoint
+    ) async throws -> StreamingResponse {
         let connected = try await connect(to: endpoint)
         let connection = connected.connection
-        defer { connection.cancel() }
 
-        onConnected(connected.info)
-        try Task.checkCancellation()
-        try await send(serialize(request, endpoint: endpoint, keepAlive: true), over: connection)
-
-        let (head, initialBody) = try await receiveHead(from: connection)
-        try onResponse(head)
-
-        var decoder = try BodyDecoder(headers: head.headers)
-        if !initialBody.isEmpty {
-            try decoder.append(initialBody, emit: onBody)
-        }
-
-        while !decoder.isFinished {
+        do {
             try Task.checkCancellation()
-            let part = try await receive(from: connection)
-            if !part.data.isEmpty {
-                try decoder.append(part.data, emit: onBody)
-            }
-            if part.isComplete {
-                try decoder.finishAtEOF(emit: onBody)
-                return
-            }
+            try await send(serialize(request, endpoint: endpoint, keepAlive: true), over: connection)
+            let (head, initialBody) = try await receiveHead(from: connection)
+            return try StreamingResponse(
+                connection: connection,
+                connectionInfo: connected.info,
+                head: head,
+                initialBody: initialBody
+            )
+        } catch {
+            connection.cancel()
+            throw error
         }
     }
 
@@ -568,42 +647,49 @@ enum HostsMappedHTTPClient {
             }
         }
 
-        mutating func append(_ data: Data, emit: (Data) -> Void) throws {
-            guard !isFinished else { return }
+        mutating func append(_ data: Data) throws -> [Data] {
+            guard !isFinished else { return [] }
             buffer.append(data)
 
             switch mode {
             case .chunked:
-                try decodeChunks(emit: emit)
+                return try decodeChunks()
             case .contentLength:
+                var emitted: [Data] = []
                 let count = min(remainingLength, buffer.count)
                 if count > 0 {
-                    emit(Data(buffer.prefix(count)))
+                    emitted.append(Data(buffer.prefix(count)))
                     buffer.removeFirst(count)
                     remainingLength -= count
                 }
                 if remainingLength == 0 { isFinished = true }
+                return emitted
             case .untilEOF:
+                var emitted: [Data] = []
                 if !buffer.isEmpty {
-                    emit(buffer)
+                    emitted.append(buffer)
                     buffer.removeAll(keepingCapacity: true)
                 }
+                return emitted
             }
         }
 
-        mutating func finishAtEOF(emit: (Data) -> Void) throws {
+        mutating func finishAtEOF() throws -> [Data] {
             switch mode {
             case .untilEOF:
-                if !buffer.isEmpty { emit(buffer) }
+                let emitted = buffer.isEmpty ? [] : [buffer]
                 buffer.removeAll()
                 isFinished = true
+                return emitted
             case .chunked, .contentLength:
                 guard isFinished else { throw ClientError.truncatedResponse }
+                return []
             }
         }
 
-        private mutating func decodeChunks(emit: (Data) -> Void) throws {
+        private mutating func decodeChunks() throws -> [Data] {
             let crlf = Data([13, 10])
+            var emitted: [Data] = []
 
             while !isFinished {
                 switch chunkState {
@@ -612,7 +698,7 @@ enum HostsMappedHTTPClient {
                         guard buffer.count <= 4096 else {
                             throw ClientError.invalidResponse("chunk-size line is too long")
                         }
-                        return
+                        return emitted
                     }
                     let rawLine = buffer[..<range.lowerBound]
                     buffer.removeSubrange(..<range.upperBound)
@@ -626,8 +712,8 @@ enum HostsMappedHTTPClient {
                     chunkState = size == 0 ? .trailers : .data(size)
 
                 case .data(let size):
-                    guard buffer.count >= size + 2 else { return }
-                    emit(Data(buffer.prefix(size)))
+                    guard buffer.count >= size + 2 else { return emitted }
+                    emitted.append(Data(buffer.prefix(size)))
                     buffer.removeFirst(size)
                     guard buffer.starts(with: crlf) else {
                         throw ClientError.invalidResponse("missing chunk terminator")
@@ -648,13 +734,14 @@ enum HostsMappedHTTPClient {
                         guard buffer.count <= 64 * 1024 else {
                             throw ClientError.invalidResponse("trailers exceed 64 KiB")
                         }
-                        return
+                        return emitted
                     }
 
                 case .finished:
                     isFinished = true
                 }
             }
+            return emitted
         }
     }
 }
