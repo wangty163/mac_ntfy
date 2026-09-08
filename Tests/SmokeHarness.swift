@@ -1,10 +1,12 @@
 import Foundation
 import Network
+import Combine
 
 @main
 struct SmokeHarness {
     @MainActor
     static func main() async throws {
+        verifyDiagnosticsStore()
         let ordered = HostsMappedHTTPClient.happyEyeballsOrder([
             "2001:db8::1", "2001:db8::2", "192.0.2.1", "192.0.2.2", "192.0.2.1",
         ])
@@ -105,6 +107,44 @@ struct SmokeHarness {
         try await verifyDirectResponseStream()
 
         print("NtfyMac smoke tests passed")
+    }
+
+    @MainActor
+    private static func verifyDiagnosticsStore() {
+        let store = ConnectionDiagnosticsStore()
+        let first = UUID()
+        let second = UUID()
+        store.reset(subscriptionIDs: [first, second])
+        var publications = 0
+        let subscription = store.objectWillChange.sink { publications += 1 }
+        defer { subscription.cancel() }
+
+        var details = ConnectionDiagnostics()
+        details.state = .connected
+        details.remoteAddress = "192.0.2.1"
+        for tick in 1...1_000 {
+            details.lastKeepaliveAt = Date(timeIntervalSince1970: Double(tick))
+            store.update(details, for: first)
+        }
+        precondition(publications == 1_000, "Live diagnostics must still publish every changed keepalive")
+        precondition(store.value(for: first) == details)
+        precondition(store.value(for: second) == ConnectionDiagnostics(),
+                     "Updates must not overwrite another topic's diagnostics")
+
+        store.update(details, for: first)
+        store.remove(UUID())
+        precondition(publications == 1_000, "Identical values and absent removals must not invalidate views")
+        store.remove(first)
+        precondition(store.values[first] == nil)
+        precondition(store.value(for: first) == ConnectionDiagnostics())
+
+        store.update(details, for: second)
+        store.reset(subscriptionIDs: [first])
+        precondition(Set(store.values.keys) == [first], "Import/reset must discard removed topics")
+        precondition(store.value(for: first) == ConnectionDiagnostics())
+        let beforeReset = publications
+        store.reset(subscriptionIDs: [first])
+        precondition(publications == beforeReset, "An unchanged reset must not invalidate views")
     }
 
     @MainActor

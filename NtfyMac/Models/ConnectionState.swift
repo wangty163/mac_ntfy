@@ -5,6 +5,36 @@
 
 import SwiftUI
 import Foundation
+import Combine
+
+/// Connection telemetry changes on every keepalive. Publish it separately from
+/// subscriptions/messages so hidden windows do not rebuild for diagnostic ticks.
+@MainActor
+final class ConnectionDiagnosticsStore: ObservableObject {
+    @Published private(set) var values: [UUID: ConnectionDiagnostics] = [:]
+
+    func value(for id: UUID) -> ConnectionDiagnostics {
+        values[id] ?? ConnectionDiagnostics()
+    }
+
+    func update(_ details: ConnectionDiagnostics, for id: UUID) {
+        guard values[id] != details else { return }
+        values[id] = details
+    }
+
+    func remove(_ id: UUID) {
+        guard values[id] != nil else { return }
+        values[id] = nil
+    }
+
+    func reset(subscriptionIDs: [UUID]) {
+        let next = Dictionary(uniqueKeysWithValues: subscriptionIDs.map {
+            ($0, ConnectionDiagnostics())
+        })
+        guard values != next else { return }
+        values = next
+    }
+}
 
 /// The live state of a single topic connection.
 enum ConnectionState: Equatable {

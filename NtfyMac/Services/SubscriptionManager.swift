@@ -17,7 +17,7 @@ final class SubscriptionManager: ObservableObject {
     @Published private(set) var subscriptions: [Subscription] = []
     @Published private(set) var messages: [StoredMessage] = []
     @Published private(set) var states: [UUID: ConnectionState] = [:]
-    @Published private(set) var diagnostics: [UUID: ConnectionDiagnostics] = [:]
+    let diagnosticsStore = ConnectionDiagnosticsStore()
     /// Subscriptions that are currently not connected (offline or stuck
     /// reconnecting). Drives the menu-bar trouble indicator. Sticky across a
     /// reconnect attempt so the brief `.connecting` phase doesn't clear it.
@@ -58,9 +58,7 @@ final class SubscriptionManager: ObservableObject {
         self.settings = settings
         self.subscriptions = store.loadSubscriptions()
         self.messages = store.loadMessages()
-        self.diagnostics = Dictionary(uniqueKeysWithValues: subscriptions.map {
-            ($0.id, ConnectionDiagnostics())
-        })
+        diagnosticsStore.reset(subscriptionIDs: subscriptions.map(\.id))
 
         NotificationService.shared.onActivated = { [weak self] subID, messageID in
             self?.markRead(subscriptionID: subID, messageID: messageID)
@@ -102,7 +100,7 @@ final class SubscriptionManager: ObservableObject {
     }
 
     func diagnostics(for subscriptionID: UUID) -> ConnectionDiagnostics {
-        diagnostics[subscriptionID] ?? ConnectionDiagnostics()
+        diagnosticsStore.value(for: subscriptionID)
     }
 
     var anyConnected: Bool {
@@ -124,7 +122,7 @@ final class SubscriptionManager: ObservableObject {
 
     func addSubscription(_ sub: Subscription) {
         subscriptions.append(sub)
-        diagnostics[sub.id] = ConnectionDiagnostics()
+        diagnosticsStore.update(ConnectionDiagnostics(), for: sub.id)
         persistSubscriptions()
         connect(sub)
     }
@@ -163,7 +161,7 @@ final class SubscriptionManager: ObservableObject {
         connections[id]?.stop()
         connections[id] = nil
         states[id] = nil
-        diagnostics[id] = nil
+        diagnosticsStore.remove(id)
         offlineSubscriptionIDs.remove(id)
         everConnectedIDs.remove(id)
         notifiedOfflineIDs.remove(id)
@@ -208,7 +206,7 @@ final class SubscriptionManager: ObservableObject {
             self?.handleStateChange(sub.id, state)
         }
         connection.onDiagnosticsChange = { [weak self] details in
-            self?.diagnostics[sub.id] = details
+            self?.diagnosticsStore.update(details, for: sub.id)
         }
         connection.onCursorInvalidated = { [weak self] in
             self?.clearCursor(for: sub.id)
@@ -217,7 +215,7 @@ final class SubscriptionManager: ObservableObject {
             self?.ingest(message, for: sub.id)
         }
         connections[sub.id] = connection
-        diagnostics[sub.id] = connection.diagnostics
+        diagnosticsStore.update(connection.diagnostics, for: sub.id)
         connection.start()
     }
 
@@ -404,9 +402,7 @@ final class SubscriptionManager: ObservableObject {
         notifiedOfflineIDs.removeAll()
 
         subscriptions = mergeResult.subscriptions
-        diagnostics = Dictionary(uniqueKeysWithValues: mergeResult.subscriptions.map {
-            ($0.id, ConnectionDiagnostics())
-        })
+        diagnosticsStore.reset(subscriptionIDs: mergeResult.subscriptions.map(\.id))
         backup.settings.apply(to: settings)
         persistSubscriptions()
         connectAll()

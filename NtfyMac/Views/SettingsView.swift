@@ -10,7 +10,9 @@ import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @EnvironmentObject var settings: AppSettings
-    @EnvironmentObject var manager: SubscriptionManager
+    // Used only by button actions. Observing this object would invalidate the
+    // entire TabView for unrelated messages and connection state changes.
+    let manager: SubscriptionManager
     @State private var authStatus: UNAuthorizationStatus = .notDetermined
     @State private var backupStatus: String?
     @State private var backupFailed = false

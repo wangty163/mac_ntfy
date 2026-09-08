@@ -126,19 +126,21 @@ struct ConnectionStatusIndicator: View {
             .help("Connection details")
             .accessibilityLabel("\(state.label). Show connection details")
             .popover(isPresented: $showingDetails, arrowEdge: .trailing) {
-                ConnectionDiagnosticsPopover(subscription: subscription)
-                    .environmentObject(manager)
+                ConnectionDiagnosticsPopover(subscription: subscription,
+                                             diagnosticsStore: manager.diagnosticsStore,
+                                             reconnect: { manager.reconnect(subscription.id) })
             }
     }
 }
 
 private struct ConnectionDiagnosticsPopover: View {
-    @EnvironmentObject var manager: SubscriptionManager
     let subscription: Subscription
+    @ObservedObject var diagnosticsStore: ConnectionDiagnosticsStore
+    let reconnect: () -> Void
     @State private var copied = false
 
     private var details: ConnectionDiagnostics {
-        manager.diagnostics(for: subscription.id)
+        diagnosticsStore.value(for: subscription.id)
     }
 
     var body: some View {
@@ -189,7 +191,7 @@ private struct ConnectionDiagnosticsPopover: View {
             Divider()
             HStack {
                 Button("Reconnect", systemImage: "arrow.clockwise") {
-                    manager.reconnect(subscription.id)
+                    reconnect()
                 }
                 .disabled(subscription.isMuted)
                 Spacer()

@@ -63,15 +63,13 @@ struct NtfyMacApp: App {
         // accessory app, so the menu-bar path opens this addressable window and
         // then explicitly focuses it.
         Window("Settings", id: "settings") {
-            SettingsView()
-                .environmentObject(manager)
+            SettingsView(manager: manager)
                 .environmentObject(settings)
         }
         .defaultSize(width: 460, height: 380)
 
         Settings {
-            SettingsView()
-                .environmentObject(manager)
+            SettingsView(manager: manager)
                 .environmentObject(settings)
         }
     }
