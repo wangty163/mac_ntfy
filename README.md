@@ -52,15 +52,29 @@ in the background and reconnects automatically.
 
 ## 📥 Download (prebuilt DMG)
 
-Every push builds an unsigned `.app` **and** a `.dmg` as CI artifacts (see the
-**Actions** tab → latest **Build** run → *Artifacts*). Tagged releases publish
-the DMG on the **Releases** page.
+Every push to `main` runs smoke tests, builds the app, and updates the
+[Latest build prerelease](https://github.com/wangty163/mac_ntfy/releases/tag/latest)
+on the **Releases** page with `NtfyMac.dmg`. After testing locally, just run
+`git push origin main`; no version tag or manual release is needed.
 
-Because the builds are **unsigned**, macOS Gatekeeper blocks the first launch.
+The `latest` tag and DMG are replaced by each successful current `main` build.
+The release notes link to its source commit and CI run. Failed builds and
+reruns of older commits do not replace the download. The app uses ad-hoc
+signing, without an Apple Developer ID certificate.
+
+Builds also retain `.app` and `.dmg` artifacts in the **Actions** tab. Pushes
+to `claude/**` and pull requests targeting `main` build artifacts only.
+Tagged `v*` releases continue to publish separate versioned DMGs and remain
+the stable releases.
+
+Because the builds lack a **Developer ID signature**, macOS Gatekeeper may block the first launch.
 Right-click (or Control-click) the app → **Open** → **Open**. You only need to
 do this once; afterwards it launches normally.
 
 ## 🏷 Cutting a release
+
+The steps below are for a stable versioned release. The `latest` development
+prerelease is updated automatically by the **Build** workflow.
 
 The **Release** workflow (`.github/workflows/release.yml`) builds a Release
 `.app`, packages it into `NtfyMac-<version>.dmg`, and publishes a GitHub

@@ -7,9 +7,13 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: build-${{ github.ref }}
-  cancel-in-progress: true
+  # Finish a main release upload before the next push can replace its assets.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   build:
@@ -136,3 +140,65 @@ jobs:
           name: NtfyMac-dmg
           path: build/NtfyMac.dmg
           if-no-files-found: error
+
+  publish:
+    name: Publish latest prerelease
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: archive
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check that this is still the current main commit
+        id: current
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          MAIN_SHA="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          if [ "$MAIN_SHA" = "$GITHUB_SHA" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping release: main has advanced beyond $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Download the tested DMG
+        if: steps.current.outputs.publish == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: NtfyMac-dmg
+          path: build/release
+
+      - name: Move the latest tag to this build
+        if: steps.current.outputs.publish == 'true'
+        run: |
+          test -s build/release/NtfyMac.dmg
+          git tag --force latest "$GITHUB_SHA"
+          git push origin refs/tags/latest --force
+
+      - name: Publish or update latest prerelease
+        if: steps.current.outputs.publish == 'true'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: latest
+          target_commitish: ${{ github.sha }}
+          name: Ntfy for Mac - Latest build
+          prerelease: true
+          make_latest: "false"
+          overwrite_files: true
+          fail_on_unmatched_files: true
+          files: build/release/NtfyMac.dmg
+          body: |
+            Automatically updated after a successful push build on `main`.
+
+            - App version: `dev-${{ github.run_number }}`
+            - Source commit: ${{ github.sha }}
+            - [Build and test results](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            Download `NtfyMac.dmg` below, open it, and drag Ntfy into Applications.
+            This development build uses ad-hoc signing, without an Apple Developer ID certificate.
