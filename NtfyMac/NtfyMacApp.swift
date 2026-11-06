@@ -26,6 +26,19 @@ struct NtfyMacApp: App {
     }
 
     var body: some Scene {
+        // Menu-bar entry — the always-available control surface.
+        MenuBarExtra {
+            MenuPanelView()
+                .environmentObject(manager)
+                .environmentObject(settings)
+                .appTextScale(settings.textScale)
+        } label: {
+            MenuBarLabel()
+                .environmentObject(manager)
+                .environmentObject(settings)
+        }
+        .menuBarExtraStyle(.window)
+
         // Full management window. Declared first so it is the app's primary
         // scene and opens at launch.
         Window("Ntfy", id: "main") {
@@ -46,19 +59,6 @@ struct NtfyMacApp: App {
                     .keyboardShortcut("q", modifiers: .command)
             }
         }
-
-        // Menu-bar entry — the always-available control surface.
-        MenuBarExtra {
-            MenuPanelView()
-                .environmentObject(manager)
-                .environmentObject(settings)
-                .appTextScale(settings.textScale)
-        } label: {
-            MenuBarLabel()
-                .environmentObject(manager)
-                .environmentObject(settings)
-        }
-        .menuBarExtraStyle(.window)
 
         // Dedicated settings window opened from the menu-bar panel. A plain
         // `Window` (rather than the `Settings` scene) is used so the menu-bar
