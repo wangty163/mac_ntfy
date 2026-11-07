@@ -1,0 +1,56 @@
+name: Isolated PR 47 and 49 validation
+on:
+  push:
+    branches: ["validation/pr-47-49-20261107"]
+    paths: [".github/workflows/isolated-pr-validation.yml"]
+permissions:
+  contents: read
+jobs:
+  verify:
+    name: PR ${{ matrix.pr }} fixed-head build and smoke
+    runs-on: macos-15
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - pr: 47
+            sha: ef83a9ac63de5592bf5e0183ff90c5cebd544860
+          - pr: 49
+            sha: bdafea1bbce090f1a6f33313efa0f0ff80fa1538
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - name: Checkout exact approved source
+        uses: actions/checkout@v4
+        with:
+          repository: wangty163/mac_ntfy
+          ref: ${{ matrix.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Verify source and toolchain
+        env:
+          EXPECTED_SHA: ${{ matrix.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          xcodebuild -version
+          swift --version
+      - name: Existing deterministic smoke tests
+        id: smoke
+        continue-on-error: true
+        run: bash scripts/run_smoke_tests.sh
+      - name: Unsigned Debug build
+        id: build
+        continue-on-error: true
+        run: |
+          xcodebuild -project NtfyMac.xcodeproj -scheme NtfyMac -configuration Debug -destination 'platform=macOS' -derivedDataPath "$RUNNER_TEMP/DerivedData" CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO ONLY_ACTIVE_ARCH=NO clean build
+      - name: Record result
+        if: always()
+        env:
+          PR: ${{ matrix.pr }}
+          SHA: ${{ matrix.sha }}
+          SMOKE: ${{ steps.smoke.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+        run: |
+          printf 'PR #%s, source %s\nSmoke: %s\nUnsigned build: %s\nNo signing, publishing, secrets, or persisted checkout credentials.\nGUI behavior was not tested.\n' "$PR" "$SHA" "$SMOKE" "$BUILD" >> "$GITHUB_STEP_SUMMARY"
+          test "$SMOKE" = success && test "$BUILD" = success
