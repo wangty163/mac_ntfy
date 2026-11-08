@@ -1,0 +1,104 @@
+name: Isolated PR 50 validation
+on:
+  push:
+    branches: ["validation/pr-50-20261108"]
+    paths: [".github/workflows/isolated-pr50-validation.yml"]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: wangty163/mac_ntfy
+          ref: c170f0ca9452e2c626ddd0a1d4d4470a63185c5c
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Verify fixed source and toolchain
+        run: |
+          test "$(git rev-parse HEAD)" = c170f0ca9452e2c626ddd0a1d4d4470a63185c5c
+          xcodebuild -version
+      - name: Existing smoke tests
+        run: bash scripts/run_smoke_tests.sh
+      - name: Selection source-method regression checks
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          s=pathlib.Path("NtfyMac/Views/MessageListView.swift").read_text()
+          def method(name):
+              start=s.index("    private func "+name)
+              a=s.index("{",start); depth=1; i=a+1
+              while depth:
+                  if s[i]=="{": depth+=1
+                  if s[i]=="}": depth-=1
+                  i+=1
+              return s[start:i].replace("private func","func",1)
+          prefix='''import Foundation
+          struct Flags: OptionSet { let rawValue:Int; static let command=Flags(rawValue:1); static let shift=Flags(rawValue:2) }
+          enum NSEvent { static var modifierFlags:Flags=[] }
+          struct Message { let id:String }
+          struct Item { let id:String; let subscriptionID:UUID; let message:Message }
+          final class Manager {
+           var deleted:[String]=[]; var read:[String]=[]
+           func deleteMessage(id:String) { deleted.append(id) }
+           func markRead(subscriptionID:UUID,messageID:String) { read.append(messageID) }
+          }
+          final class Harness {
+           var selectedMessageIDs:Set<String>=[]
+           var selectedMessageID:String?
+           var lastSelectedMessageID:String?
+           var items:[Item]=[]
+           let manager=Manager()
+          '''
+          code=prefix+"\n".join(method(n) for n in ["selectMessage","deleteMessages","contextMenuDeleteTitle"])+"\n}\n"
+          code+='''let h=Harness()
+          let topic=UUID()
+          h.items=["A","B","C","D"].map { Item(id:$0,subscriptionID:topic,message:Message(id:$0)) }
+          h.selectMessage("A")
+          assert(h.selectedMessageIDs == ["A"])
+          NSEvent.modifierFlags = .command
+          h.selectMessage("C")
+          assert(h.selectedMessageIDs == ["A","C"])
+          h.selectMessage("C")
+          assert(h.selectedMessageIDs == ["A"] && h.selectedMessageID == "A")
+          NSEvent.modifierFlags = []
+          h.selectMessage("A")
+          NSEvent.modifierFlags = .shift
+          h.selectMessage("C")
+          assert(h.selectedMessageIDs == ["A","B","C"])
+          h.items=h.items.filter { $0.id == "D" }
+          h.selectMessage("D")
+          assert(h.selectedMessageIDs == ["D"])
+          NSEvent.modifierFlags = []
+          h.items=["A","B"].map { Item(id:$0,subscriptionID:topic,message:Message(id:$0)) }
+          h.selectMessage("A")
+          NSEvent.modifierFlags = .command
+          h.selectMessage("B")
+          h.items=h.items.filter { $0.id == "A" }
+          assert(h.selectedMessageIDs.count == 2)
+          assert(h.contextMenuDeleteTitle(isSelected:true,hasMultipleSelected:true) == "Delete selected messages")
+          assert(h.contextMenuDeleteTitle(isSelected:false,hasMultipleSelected:true) == "Delete right-clicked message")
+          h.deleteMessages(["C"])
+          assert(h.selectedMessageIDs == ["A","B"])
+          h.deleteMessages(h.selectedMessageIDs)
+          assert(Set(h.manager.deleted) == ["A","B","C"])
+          assert(h.selectedMessageIDs.isEmpty && h.selectedMessageID == nil && h.lastSelectedMessageID == nil)
+          print("Selection method checks passed: normal click, Command add/remove, Shift range/fallback, cross-search selection, menu labels, delete state cleanup.")
+          print("Methods extracted verbatim from PR source; manager/state are test doubles. This is not end-to-end SwiftUI focus or UI testing.")
+          '''
+          pathlib.Path("/tmp/selection-check.swift").write_text(code)
+          
+          PY
+          xcrun swiftc /tmp/selection-check.swift -o /tmp/selection-check
+          /tmp/selection-check
+      - name: Unsigned Debug build
+        run: |
+          xcodebuild -project NtfyMac.xcodeproj -scheme NtfyMac -configuration Debug -destination 'platform=macOS' -derivedDataPath "$RUNNER_TEMP/DerivedData" CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO ONLY_ACTIVE_ARCH=NO clean build
+      - name: Validation scope
+        if: always()
+        run: |
+          echo 'Fixed PR #50 head c170f0c. No secrets, signing, publishing or persisted checkout credentials. Selection source-method tests use doubles and do not prove end-to-end UI/focus behavior.' >> "$GITHUB_STEP_SUMMARY"
