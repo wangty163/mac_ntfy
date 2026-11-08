@@ -33,6 +33,14 @@ struct NtfyMacApp: App {
                 .environmentObject(manager)
                 .environmentObject(settings)
                 .appTextScale(settings.textScale)
+                // Make sure messages can only be deleted when the
+                // main window is active
+                .focusedSceneValue(\.deleteSelectedMessages, {
+                    NotificationCenter.default.post(
+                        name: .deleteSelectedMessages,
+                        object: nil
+                    )
+                })
         }
         .defaultSize(width: 1000, height: 640)
         .commands {
@@ -45,6 +53,8 @@ struct NtfyMacApp: App {
                 Button("Quit Ntfy") { NSApp.terminate(nil) }
                     .keyboardShortcut("q", modifiers: .command)
             }
+            // Let's use the default macOS shortcut to delete messages
+            DeleteSelectedMessagesCommands()
         }
 
         // Menu-bar entry — the always-available control surface.

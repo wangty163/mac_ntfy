@@ -12,6 +12,8 @@ struct MessageListView: View {
     @State private var searchText = ""
     @State private var showingCompose = false
     @FocusState private var searchFocused: Bool
+    @Binding var selectedMessageIDs: Set<String>
+    @State private var lastSelectedMessageID: String?
 
     private var subscription: Subscription? {
         if case let .subscription(id) = selection { return manager.subscription(id: id) }
@@ -46,27 +48,32 @@ struct MessageListView: View {
                     ScrollView {
                         LazyVStack(spacing: 8) {
                             ForEach(items) { item in
-                                MessageRowView(
-                                    stored: item,
-                                    subscriptionName: manager.subscription(id: item.subscriptionID)?.name ?? "Topic",
-                                    accent: manager.subscription(id: item.subscriptionID)?.accentColor ?? .accentColor,
-                                    showSource: subscription == nil
-                                )
+                                Button {
+                                    selectMessage(item.id)
+                                } label: {
+                                    MessageRowView(
+                                        stored: item,
+                                        subscriptionName: manager.subscription(id: item.subscriptionID)?.name ?? "Topic",
+                                        accent: manager.subscription(id: item.subscriptionID)?.accentColor ?? .accentColor,
+                                        showSource: subscription == nil
+                                    )
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
+                                    .background(
+                                        RoundedRectangle(cornerRadius: Theme.cornerRadius)
+                                            .stroke(
+                                                selectedMessageIDs.contains(item.id)
+                                                    ? Color.accentColor
+                                                    : .clear,
+                                                lineWidth: 2
+                                            )
+                                    )
+                                }
+                                .buttonStyle(MessageSelectionButtonStyle())
                                 .id(item.id)
-                                .onTapGesture {
-                                    selectedMessageID = item.id
-                                    manager.markRead(subscriptionID: item.subscriptionID, messageID: item.message.id)
-                                }
                                 .contextMenu {
-                                    Button("Delete Message", systemImage: "trash", role: .destructive) {
-                                        if selectedMessageID == item.id { selectedMessageID = nil }
-                                        manager.deleteMessage(id: item.id)
-                                    }
+                                    messageContextMenu(for: item)
                                 }
-                                .background(
-                                    RoundedRectangle(cornerRadius: Theme.cornerRadius)
-                                        .stroke(selectedMessageID == item.id ? Color.accentColor : .clear, lineWidth: 2)
-                                )
                             }
                         }
                         .padding(12)
@@ -92,6 +99,22 @@ struct MessageListView: View {
             if let subscription {
                 ComposeView(subscription: subscription)
             }
+        }
+        .onChange(of: selectedMessageID) { newValue in
+            guard let newValue else {
+                selectedMessageIDs.removeAll()
+                lastSelectedMessageID = nil
+                return
+            }
+
+            if !selectedMessageIDs.contains(newValue) {
+                selectedMessageIDs = [newValue]
+                lastSelectedMessageID = newValue
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .deleteSelectedMessages)) { _ in
+            guard !selectedMessageIDs.isEmpty else { return }
+            deleteMessages(selectedMessageIDs)
         }
     }
 
@@ -166,6 +189,110 @@ struct MessageListView: View {
             let state = manager.state(for: id)
             return "\(subscription?.topicURLString ?? "") · \(state.label)"
         }
+    }
+
+    private func selectMessage(_ id: String) {
+        let modifiers = NSEvent.modifierFlags
+        let commandPressed = modifiers.contains(.command)
+        let shiftPressed = modifiers.contains(.shift)
+
+        if commandPressed {
+            if selectedMessageIDs.contains(id) {
+                selectedMessageIDs.remove(id)
+
+                // If the primary message was deselected,
+                // display another selected message.
+                if selectedMessageID == id {
+                    selectedMessageID = selectedMessageIDs.first
+                }
+            } else {
+                selectedMessageIDs.insert(id)
+                selectedMessageID = id
+            }
+
+            lastSelectedMessageID = id
+        } else if shiftPressed {
+            // Shift-click: select a contiguous range.
+            if let anchor = lastSelectedMessageID,
+            let start = items.firstIndex(where: { $0.id == anchor }),
+            let end = items.firstIndex(where: { $0.id == id }) {
+
+                let lower = min(start, end)
+                let upper = max(start, end)
+
+                selectedMessageIDs = Set(
+                    items[lower...upper].map(\.id)
+                )
+            } else {
+                selectedMessageIDs = [id]
+                lastSelectedMessageID = id
+            }
+
+            selectedMessageID = id
+
+        } else {
+            // Normal click: select only one message.
+            selectedMessageIDs = [id]
+            lastSelectedMessageID = id
+            selectedMessageID = id
+        }
+
+        // Mark the clicked message as read.
+        if let item = items.first(where: { $0.id == id }) {
+            manager.markRead(
+                subscriptionID: item.subscriptionID,
+                messageID: item.message.id
+            )
+        }
+    }
+
+    private func deleteMessages(_ ids: Set<String>) {
+        guard !ids.isEmpty else { return }
+
+        // Clear the detail pane if its message is being deleted.
+        if let selectedMessageID, ids.contains(selectedMessageID) {
+            self.selectedMessageID = nil
+        }
+
+        // Delete messages.
+        for id in ids {
+            manager.deleteMessage(id: id)
+        }
+
+        // Update selection state.
+        selectedMessageIDs.subtract(ids)
+
+        if let lastSelectedMessageID,
+        ids.contains(lastSelectedMessageID) {
+            self.lastSelectedMessageID = nil
+        }
+    }
+
+    private func messageContextMenu(for item: StoredMessage) -> some View {
+        let isSelected = selectedMessageIDs.contains(item.id)
+        let hasMultipleSelected = selectedMessageIDs.count > 1
+
+        let title = contextMenuDeleteTitle(
+            isSelected: isSelected,
+            hasMultipleSelected: hasMultipleSelected
+        )
+        let idsToDelete = isSelected && hasMultipleSelected
+            ? selectedMessageIDs
+            : [item.id]
+
+        return Button(title, systemImage: "trash", role: .destructive) {
+            deleteMessages(idsToDelete)
+        }
+    }
+
+    private func contextMenuDeleteTitle(isSelected: Bool, hasMultipleSelected: Bool) -> String {
+        if isSelected && hasMultipleSelected {
+            return "Delete selected messages"
+        }
+        if isSelected {
+            return "Delete selected message"
+        }
+        return "Delete right-clicked message"
     }
 }
 

@@ -101,6 +101,17 @@ enum Theme {
     }
 }
 
+/// Custom Message Button (required for message-multi-select)
+struct MessageSelectionButtonStyle: PrimitiveButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .contentShape(Rectangle())
+            .onTapGesture {
+                configuration.trigger()
+            }
+    }
+}
+
 /// A soft, rounded "card" background used throughout the message list.
 struct CardBackground: ViewModifier {
     var highlighted: Bool = false
@@ -202,5 +213,36 @@ struct TimestampText: View {
 
     var body: some View {
         Text(AppDateFormat.fullTimestamp(date))
+    }
+}
+
+/// Delete selected message(s) via a keyboard shortcut
+extension Notification.Name {
+    static let deleteSelectedMessages = Notification.Name("deleteSelectedMessages")
+}
+
+private struct DeleteSelectedMessagesKey: FocusedValueKey {
+    typealias Value = () -> Void
+}
+
+extension FocusedValues {
+    var deleteSelectedMessages: (() -> Void)? {
+        get { self[DeleteSelectedMessagesKey.self] }
+        set { self[DeleteSelectedMessagesKey.self] = newValue }
+    }
+}
+
+struct DeleteSelectedMessagesCommands: Commands {
+    @FocusedValue(\.deleteSelectedMessages)
+    private var deleteSelectedMessages
+
+    var body: some Commands {
+        CommandGroup(after: .pasteboard) {
+            Button("Delete") {
+                deleteSelectedMessages?()
+            }
+            .keyboardShortcut(.delete, modifiers: [])
+            .disabled(deleteSelectedMessages == nil)
+        }
     }
 }

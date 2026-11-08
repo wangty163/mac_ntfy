@@ -11,6 +11,7 @@ struct MainView: View {
     @EnvironmentObject var manager: SubscriptionManager
     @State private var selection: SidebarSelection? = .all
     @State private var selectedMessageID: String?
+    @State private var selectedMessageIDs: Set<String> = []
     @State private var showingAdd = false
     @State private var editingSub: Subscription?
 
@@ -20,7 +21,8 @@ struct MainView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 320)
         } content: {
             MessageListView(selection: selection ?? .all,
-                            selectedMessageID: $selectedMessageID)
+                            selectedMessageID: $selectedMessageID,
+                            selectedMessageIDs: $selectedMessageIDs)
                 .navigationSplitViewColumnWidth(min: 320, ideal: 420)
         } detail: {
             detailColumn
@@ -32,7 +34,10 @@ struct MainView: View {
         .sheet(item: $editingSub) { sub in
             AddSubscriptionView(editing: sub)
         }
-        .onChange(of: selection) { _ in selectedMessageID = nil }
+        .onChange(of: selection) { _ in
+            selectedMessageID = nil
+            selectedMessageIDs.removeAll()
+        }
         // `.task(id:)` (rather than `.onChange`) so a reveal that was queued
         // before this view existed — e.g. a notification clicked while the
         // window was closed — is still honoured when the view first appears.
@@ -43,11 +48,22 @@ struct MainView: View {
         }
     }
 
+    private var selectedMessages: [StoredMessage] {
+        manager.messages.filter {
+            selectedMessageIDs.contains($0.id)
+        }
+    }
+
     @ViewBuilder
     private var detailColumn: some View {
-        if let id = selectedMessageID,
-           let stored = manager.messages.first(where: { $0.id == id }),
-           let sub = manager.subscription(id: stored.subscriptionID) {
+        if selectedMessages.count > 1 {
+            MultiSelectionSummaryView(messages: selectedMessages) {
+                selectedMessageID = nil
+                selectedMessageIDs.removeAll()
+            }
+        } else if let id = selectedMessageID,
+                let stored = manager.messages.first(where: { $0.id == id }),
+                let sub = manager.subscription(id: stored.subscriptionID) {
             MessageDetailView(stored: stored, subscription: sub)
         } else {
             DetailPlaceholder()
