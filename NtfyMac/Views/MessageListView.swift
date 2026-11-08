@@ -12,7 +12,7 @@ struct MessageListView: View {
     @State private var searchText = ""
     @State private var showingCompose = false
     @FocusState private var searchFocused: Bool
-    @State private var selectedMessageIDs: Set<String> = []
+    @Binding var selectedMessageIDs: Set<String>
     @State private var lastSelectedMessageID: String?
 
     private var subscription: Subscription? {
