@@ -115,19 +115,15 @@ struct MessageDetailView: View {
                         in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         case let .image(alt, url):
             Link(destination: url) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case let .success(image):
-                        image.resizable().scaledToFit()
-                            .frame(maxHeight: 360)
-                            .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius))
-                    case .failure:
-                        Label(alt.isEmpty ? "Open image" : alt, systemImage: "photo.badge.exclamationmark")
-                    default:
-                        ProgressView().frame(maxWidth: .infinity, minHeight: 100)
-                    }
+                MessageImageView(url: url) {
+                    Label(
+                        alt.isEmpty ? "Open image" : alt,
+                        systemImage: "photo.badge.exclamationmark"
+                    )
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .buttonStyle(.plain)
             .accessibilityLabel(alt.isEmpty ? "Image" : alt)
         }
@@ -142,17 +138,8 @@ struct MessageDetailView: View {
                 .foregroundStyle(.secondary)
 
             if attachment.isImage, let url = attachment.fileURL {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case let .success(image):
-                        image.resizable().scaledToFit()
-                            .frame(maxHeight: 280)
-                            .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius))
-                    case .failure:
-                        attachmentRow(attachment)
-                    default:
-                        ProgressView().frame(maxWidth: .infinity, minHeight: 120)
-                    }
+                MessageImageView(url: url) {
+                    attachmentRow(attachment)
                 }
             } else {
                 attachmentRow(attachment)
