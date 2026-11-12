@@ -138,12 +138,9 @@ struct MessageDetailView: View {
                 .foregroundStyle(.secondary)
 
             if attachment.isImage, let url = attachment.fileURL {
-                MessageImageView(url: url) {
-                    attachmentRow(attachment)
-                }
-            } else {
-                attachmentRow(attachment)
+                MessageImageView(url: url) {}
             }
+            attachmentRow(attachment)
         }
     }
 
@@ -161,11 +158,21 @@ struct MessageDetailView: View {
             Spacer()
             if let url = attachment.fileURL {
                 Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(url.absoluteString, forType: .string)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                }
+                .buttonStyle(.borderless)
+                .help("Copy URL")
+
+                Button {
                     NSWorkspace.shared.open(url)
                 } label: {
                     Image(systemName: "arrow.down.circle")
                 }
                 .buttonStyle(.borderless)
+                .help("Download")
             }
         }
         .padding(14)
