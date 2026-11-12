@@ -294,4 +294,13 @@ struct NtfyAttachment: Codable, Equatable, Hashable {
         let lower = name.lowercased()
         return [".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic"].contains { lower.hasSuffix($0) }
     }
+
+    var isHostedByNtfy: Bool {
+        expires != nil
+    }
+
+    var isExpired: Bool {
+        guard let expires else { return false }
+        return Date(timeIntervalSince1970: TimeInterval(expires)) <= Date()
+    }
 }
