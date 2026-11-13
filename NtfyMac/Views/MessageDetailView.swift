@@ -11,6 +11,8 @@ struct MessageDetailView: View {
 
     @State private var actionStatus: [String: String] = [:]
     @State private var runningActionID: String?
+    @State private var messageCopied = false
+    @State private var isMessageHovered = false
 
     private var message: NtfyMessage { stored.message }
 
@@ -70,22 +72,55 @@ struct MessageDetailView: View {
         return prefix.isEmpty ? base : "\(prefix) \(base)"
     }
 
+    private func copyMessage(_ body: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(body, forType: .string)
+
+        messageCopied = true
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            messageCopied = false
+        }
+    }
+
     @ViewBuilder
     private func bodyView(_ body: String) -> some View {
-        Group {
-            if message.isMarkdown {
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(Array(message.markdownBlocks.enumerated()), id: \.offset) { _, block in
-                        markdownBlock(block)
+        ZStack(alignment: .topTrailing) {
+            Group {
+                if message.isMarkdown {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(Array(message.markdownBlocks.enumerated()), id: \.offset) { _, block in
+                            markdownBlock(block)
+                        }
                     }
+                } else {
+                    Text(body)
+                        .textSelection(.enabled)
                 }
-            } else {
-                Text(body)
-                    .textSelection(.enabled)
             }
+            .appFont(.body)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button {
+                copyMessage(body)
+            } label: {
+                Image(systemName: messageCopied ? "checkmark" : "doc.on.doc")
+                    .frame(width: 28, height: 28)
+                    .background(
+                        Color(nsColor: .controlBackgroundColor),
+                        in: RoundedRectangle(cornerRadius: 6)
+                    )
+            }
+            .buttonStyle(.borderless)
+            .help(messageCopied ? "Copied!" : "Copy message")
+            .accessibilityLabel(messageCopied ? "Copied" : "Copy message")
+            .opacity(isMessageHovered || messageCopied ? 1 : 0)
+
         }
-        .appFont(.body)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .onHover { hovering in
+            isMessageHovered = hovering
+        }
         .padding(16)
         .cardBackground()
     }
