@@ -42,12 +42,48 @@ struct ComposeView: View {
                             .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
                     }
                     LabeledField("Priority") {
-                        Picker("", selection: $req.priority) {
-                            ForEach(NtfyPriority.allCases, id: \.self) { p in
-                                Text(p.label).tag(p.rawValue)
+                        HStack(spacing: 6) {
+                            ForEach(NtfyPriority.allCases, id: \.self) { priority in
+                                let isSelected = req.priority == priority.rawValue
+
+                                Button {
+                                    req.priority = priority.rawValue
+                                } label: {
+                                    VStack(spacing: 2) {
+                                        Image(systemName: priority.symbol)
+                                            .font(.system(size: 15, weight: .semibold))
+
+                                        Text(priority.label)
+                                            .font(.system(size: 11, weight: .medium))
+                                    }
+                                    .foregroundStyle(
+                                        isSelected ? priority.tint : .secondary
+                                    )
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 5)
+                                    .background {
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(
+                                                isSelected
+                                                    ? priority.tint.opacity(0.15)
+                                                    : Color.clear
+                                            )
+                                    }
+                                    .overlay {
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(
+                                                isSelected
+                                                    ? priority.tint
+                                                    : Color.secondary.opacity(0.2),
+                                                lineWidth: isSelected ? 1.5 : 1
+                                            )
+                                    }
+                                    .contentShape(RoundedRectangle(cornerRadius: 8))
+                                }
+                                .buttonStyle(.plain)
+                                .help(priority.label)
                             }
                         }
-                        .pickerStyle(.segmented).labelsHidden()
                     }
                     LabeledField("Tags (comma separated)") {
                         TextField("warning, skull", text: $tagsText).textFieldStyle(.roundedBorder)
@@ -88,7 +124,7 @@ struct ComposeView: View {
             }
             .padding(16)
         }
-        .frame(width: 480, height: 600)
+        .frame(width: 500, height: 620)
     }
 
     private func send() {
