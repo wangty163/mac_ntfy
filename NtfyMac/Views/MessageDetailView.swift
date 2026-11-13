@@ -11,6 +11,8 @@ struct MessageDetailView: View {
 
     @State private var actionStatus: [String: String] = [:]
     @State private var runningActionID: String?
+    @State private var messageCopied = false
+    @State private var isMessageHovered = false
 
     private var message: NtfyMessage { stored.message }
 
@@ -70,22 +72,55 @@ struct MessageDetailView: View {
         return prefix.isEmpty ? base : "\(prefix) \(base)"
     }
 
+    private func copyMessage(_ body: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(body, forType: .string)
+
+        messageCopied = true
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            messageCopied = false
+        }
+    }
+
     @ViewBuilder
     private func bodyView(_ body: String) -> some View {
-        Group {
-            if message.isMarkdown {
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(Array(message.markdownBlocks.enumerated()), id: \.offset) { _, block in
-                        markdownBlock(block)
+        ZStack(alignment: .topTrailing) {
+            Group {
+                if message.isMarkdown {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(Array(message.markdownBlocks.enumerated()), id: \.offset) { _, block in
+                            markdownBlock(block)
+                        }
                     }
+                } else {
+                    Text(body)
+                        .textSelection(.enabled)
                 }
-            } else {
-                Text(body)
-                    .textSelection(.enabled)
             }
+            .appFont(.body)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button {
+                copyMessage(body)
+            } label: {
+                Image(systemName: messageCopied ? "checkmark" : "doc.on.doc")
+                    .frame(width: 28, height: 28)
+                    .background(
+                        Color(nsColor: .controlBackgroundColor),
+                        in: RoundedRectangle(cornerRadius: 6)
+                    )
+            }
+            .buttonStyle(.borderless)
+            .help(messageCopied ? "Copied!" : "Copy message")
+            .accessibilityLabel(messageCopied ? "Copied" : "Copy message")
+            .opacity(isMessageHovered || messageCopied ? 1 : 0)
+
         }
-        .appFont(.body)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .onHover { hovering in
+            isMessageHovered = hovering
+        }
         .padding(16)
         .cardBackground()
     }
@@ -115,19 +150,15 @@ struct MessageDetailView: View {
                         in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         case let .image(alt, url):
             Link(destination: url) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case let .success(image):
-                        image.resizable().scaledToFit()
-                            .frame(maxHeight: 360)
-                            .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius))
-                    case .failure:
-                        Label(alt.isEmpty ? "Open image" : alt, systemImage: "photo.badge.exclamationmark")
-                    default:
-                        ProgressView().frame(maxWidth: .infinity, minHeight: 100)
-                    }
+                MessageImageView(url: url) {
+                    Label(
+                        alt.isEmpty ? "Open image" : alt,
+                        systemImage: "photo.badge.exclamationmark"
+                    )
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .buttonStyle(.plain)
             .accessibilityLabel(alt.isEmpty ? "Image" : alt)
         }
@@ -142,21 +173,9 @@ struct MessageDetailView: View {
                 .foregroundStyle(.secondary)
 
             if attachment.isImage, let url = attachment.fileURL {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case let .success(image):
-                        image.resizable().scaledToFit()
-                            .frame(maxHeight: 280)
-                            .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius))
-                    case .failure:
-                        attachmentRow(attachment)
-                    default:
-                        ProgressView().frame(maxWidth: .infinity, minHeight: 120)
-                    }
-                }
-            } else {
-                attachmentRow(attachment)
+                MessageImageView(url: url) {}
             }
+            attachmentRow(attachment)
         }
     }
 
@@ -174,11 +193,21 @@ struct MessageDetailView: View {
             Spacer()
             if let url = attachment.fileURL {
                 Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(url.absoluteString, forType: .string)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                }
+                .buttonStyle(.borderless)
+                .help("Copy URL")
+
+                Button {
                     NSWorkspace.shared.open(url)
                 } label: {
                     Image(systemName: "arrow.down.circle")
                 }
                 .buttonStyle(.borderless)
+                .help("Download")
             }
         }
         .padding(14)
