@@ -86,7 +86,12 @@ struct ComposeView: View {
                         }
                     }
                     LabeledField("Tags (comma separated)") {
-                        TextField("warning, skull", text: $tagsText).textFieldStyle(.roundedBorder)
+                        HStack(spacing: 8) {
+                            EmojiTagPicker(tagsText: $tagsText)
+
+                            TextField("warning, skull", text: $tagsText)
+                                .textFieldStyle(.roundedBorder)
+                        }
                     }
                     LabeledField("Click URL") {
                         TextField("https://…", text: $req.click).textFieldStyle(.roundedBorder)
