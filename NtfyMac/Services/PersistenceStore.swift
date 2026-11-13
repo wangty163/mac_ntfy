@@ -32,9 +32,18 @@ final class PersistenceStore {
         let base = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first ?? FileManager.default.temporaryDirectory
-        directory = base.appendingPathComponent("NtfyMac", isDirectory: true)
+
+        let bundleIdentifier = Bundle.main.bundleIdentifier
+        let appIdentifier: String
+        if bundleIdentifier == "com.ntfymac.NtfyMac" {
+            appIdentifier = "NtfyMac"
+        } else {
+            appIdentifier = bundleIdentifier ?? "NtfyMac"
+        }
+        directory = base.appendingPathComponent(appIdentifier, isDirectory: true)
         subscriptionsURL = directory.appendingPathComponent("subscriptions.json")
         messagesURL = directory.appendingPathComponent("messages.json")
+
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     }
 
