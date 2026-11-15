@@ -69,8 +69,14 @@ struct LocalAttachment {
         }
 
         setHeader(req.click, name: "X-Click", on: &request)
-        setHeader(req.delay, name: "X-Delay", on: &request)
         setHeader(req.email, name: "X-Email", on: &request)
+
+        if !req.delay.isEmpty {
+            setHeader(req.delay, name: "X-Delay", on: &request)
+            // To interpret a natural language time or even a simple time (e.g. 22:30),
+            // we need a timezone header.
+            setHeader(TimeZone.current.identifier, name: "X-Timezone", on: &request)
+        }
 
         if req.markdown && attachment != nil { setHeader("true", name: "X-Markdown", on: &request) }
 
