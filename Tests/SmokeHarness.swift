@@ -2,6 +2,12 @@ import Foundation
 import Network
 import Combine
 
+// The smoke harness does not launch the app or open any windows.
+@MainActor
+enum MainWindow {
+    static func show() {}
+}
+
 @main
 struct SmokeHarness {
     @MainActor
@@ -191,9 +197,68 @@ struct SmokeHarness {
         precondition(EmojiMap.emoji(for: "new") == "🆕")
         precondition(EmojiMap.emoji(for: "film_strip") == "🎞️")
 
+        await verifyMutedSubscriptionsStayIdle(settings: settings)
         try await verifyDirectResponseStream()
 
         print("NtfyMac smoke tests passed")
+    }
+
+    @MainActor
+    private static func verifyMutedSubscriptionsStayIdle(settings: AppSettings) async {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NtfyMacMuteSmoke.\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let manager = SubscriptionManager(
+            settings: settings,
+            store: PersistenceStore(directory: directory),
+            monitorSystemEvents: false
+        )
+
+        // Use invalid URLs so the real connection loop runs without networking.
+        var muted = Subscription()
+        muted.baseURL = "https://["
+        muted.topic = "mute-smoke"
+        var active = Subscription()
+        active.baseURL = "https://["
+        active.topic = "active-smoke"
+        precondition(muted.streamURL() == nil && active.streamURL() == nil)
+        defer {
+            manager.removeSubscription(muted.id)
+            manager.removeSubscription(active.id)
+        }
+        manager.addSubscription(muted)
+        manager.addSubscription(active)
+        await waitForConnectionAttempt(manager, subscriptionID: muted.id)
+        await waitForConnectionAttempt(manager, subscriptionID: active.id)
+
+        muted.isMuted = true
+        manager.updateSubscription(muted)
+        precondition(manager.state(for: muted.id) == .idle)
+
+        for _ in 0..<2 {
+            // The shared entry point for network recovery and wake.
+            manager.reconnectAll()
+            precondition(manager.state(for: active.id) == .idle)
+            await waitForConnectionAttempt(manager, subscriptionID: active.id)
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            precondition(manager.state(for: muted.id) == .idle,
+                         "Reconnect must not restart a previously connected muted topic")
+        }
+
+        muted.isMuted = false
+        manager.updateSubscription(muted)
+        await waitForConnectionAttempt(manager, subscriptionID: muted.id)
+    }
+
+    @MainActor
+    private static func waitForConnectionAttempt(
+        _ manager: SubscriptionManager, subscriptionID: UUID
+    ) async {
+        for _ in 0..<200 {
+            if manager.state(for: subscriptionID) != .idle { return }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        preconditionFailure("Active subscription did not attempt to connect")
     }
 
     @MainActor

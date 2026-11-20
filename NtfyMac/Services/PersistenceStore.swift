@@ -28,11 +28,15 @@ final class PersistenceStore {
         return d
     }()
 
-    private init() {
+    private convenience init() {
         let base = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first ?? FileManager.default.temporaryDirectory
-        directory = base.appendingPathComponent("NtfyMac", isDirectory: true)
+        self.init(directory: base.appendingPathComponent("NtfyMac", isDirectory: true))
+    }
+
+    init(directory: URL) {
+        self.directory = directory
         subscriptionsURL = directory.appendingPathComponent("subscriptions.json")
         messagesURL = directory.appendingPathComponent("messages.json")
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
