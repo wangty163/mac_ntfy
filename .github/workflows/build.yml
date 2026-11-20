@@ -148,60 +148,6 @@ jobs:
           path: build/NtfyMac.dmg
           if-no-files-found: error
 
-  validate_exact_intel_artifact:
-    name: Launch exact #59 DMG on Intel macOS 15
-    if: github.event_name == 'pull_request' && github.event.pull_request.number == 59 && github.head_ref == 'fix/macos-ci-runner-54'
-    runs-on: macos-15-intel
-    timeout-minutes: 8
-    permissions:
-      actions: read
-    steps:
-      - name: Verify provenance and download exact DMG
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          test "$(uname -m)" = x86_64
-          [[ "$(sw_vers -productVersion)" == 15.* ]]
-          uname -m
-          sw_vers -productVersion
-          metadata="$(gh api repos/wangty163/mac_ntfy/actions/artifacts/14611247441)"
-          jq -e '
-            .id == 14611247441 and .name == "NtfyMac-dmg" and .expired == false and
-            .workflow_run.id == 44697186542 and
-            .workflow_run.head_sha == "77cf3be3b330715e8744950abcf2d53fec922b51" and
-            .digest == "sha256:6578ea2b5d076716fa56b8aa8bce13c55d3ed0a5a706c4bae5262cefcc746360"
-          ' <<< "$metadata"
-          gh api repos/wangty163/mac_ntfy/actions/artifacts/14611247441/zip > "$RUNNER_TEMP/ntfy-intel.zip"
-          printf '%s  %s\n' '6578ea2b5d076716fa56b8aa8bce13c55d3ed0a5a706c4bae5262cefcc746360' "$RUNNER_TEMP/ntfy-intel.zip" | shasum -a 256 -c -
-          unzip -q "$RUNNER_TEMP/ntfy-intel.zip" -d "$RUNNER_TEMP/ntfy-intel"
-      - name: Launch the packaged app without installing it
-        run: |
-          set -euo pipefail
-          mountdir="$(mktemp -d)"
-          logfile="$RUNNER_TEMP/ntfy-intel-launch.log"
-          pid=''
-          mounted=0
-          cleanup() {
-            if [[ -n "$pid" ]]; then kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; fi
-            cat "$logfile" 2>/dev/null || true
-            if [[ "$mounted" == 1 ]]; then hdiutil detach "$mountdir"; fi
-            rmdir "$mountdir"
-          }
-          trap cleanup EXIT
-          hdiutil attach -readonly -nobrowse -mountpoint "$mountdir" "$RUNNER_TEMP/ntfy-intel/NtfyMac.dmg"
-          mounted=1
-          app="$(find "$mountdir" -maxdepth 1 -name '*.app' -print -quit)"
-          test -n "$app"
-          codesign --verify --deep --strict --verbose=2 "$app"
-          executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")"
-          /usr/bin/arch -x86_64 "$app/Contents/MacOS/$executable" > "$logfile" 2>&1 &
-          pid=$!
-          sleep 12
-          kill -0 "$pid"
-          test -n "$(ps -p "$pid" -o stat= | grep -v Z)"
-          echo 'Packaged app launched natively on Intel macOS 15 and remained running for 12 seconds.'
-
   publish:
     name: Publish latest prerelease
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
