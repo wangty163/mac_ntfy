@@ -7,7 +7,7 @@ executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist")"
 binary="$app/Contents/MacOS/$executable"
 
 echo "Architectures: $(xcrun lipo -archs "$binary")"
-xcrun lipo -verify_arch arm64 x86_64 "$binary"
+xcrun lipo "$binary" -verify_arch arm64 x86_64
 
 for arch in arm64 x86_64; do
   minimum="$(xcrun vtool -arch "$arch" -show-build "$binary" | awk '$1 == "minos" { print $2 }')"
