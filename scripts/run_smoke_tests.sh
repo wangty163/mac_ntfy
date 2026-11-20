@@ -17,6 +17,8 @@ xcrun swiftc -parse-as-library -target "$TARGET" \
   NtfyMac/Services/ProxyConfig.swift \
   NtfyMac/Services/HostsMappedHTTPClient.swift \
   NtfyMac/Services/NtfyConnection.swift \
+  NtfyMac/Services/PersistenceStore.swift \
+  NtfyMac/Services/SubscriptionManager.swift \
   NtfyMac/Services/NotificationService.swift \
   NtfyMac/Services/ConfigurationBackup.swift \
   NtfyMac/Services/ActionRunner.swift \
