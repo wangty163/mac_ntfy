@@ -49,7 +49,7 @@ struct LocalAttachment {
             setHeader(attachment.filename, name: "X-Filename", on: &request)
             // The request body contains the file, so the message
             // must be supplied through the X-Message header.
-            setHeader(req.message, name: "X-Message", on: &request)
+            setHeader(encodedHeaderValue(req.message), name: "X-Message", on: &request)
         } else {
             // Regular message or URL attachment: POST message body.
             request.httpMethod = "POST"
@@ -99,6 +99,13 @@ struct LocalAttachment {
         // Pass Unicode strings directly. URLSession handles HTTP
         // header serialization; ntfy supports UTF-8 headers.
         request.setValue(value, forHTTPHeaderField: name)
+    }
+
+    private static func encodedHeaderValue(_ value: String) -> String {
+        guard value.contains(where: \.isNewline) else { return value }
+
+        let encoded = Data(value.utf8).base64EncodedString()
+        return "=?UTF-8?B?\(encoded)?="
     }
 
     // MARK: - Shared HTTP transport
