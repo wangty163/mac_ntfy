@@ -46,7 +46,7 @@ struct LocalAttachment {
             request.httpBody = attachment.data
             request.setValue(attachment.contentType, forHTTPHeaderField: "Content-Type")
 
-            setHeader(attachment.filename, name: "X-Filename", on: &request)
+            setHeader(encodedHeaderValue(attachment.filename), name: "X-Filename", on: &request)
             // The request body contains the file, so the message
             // must be supplied through the X-Message header.
             setHeader(encodedHeaderValue(req.message), name: "X-Message", on: &request)
@@ -57,19 +57,19 @@ struct LocalAttachment {
             request.setValue(
                 req.markdown ? "text/markdown" : "text/plain", forHTTPHeaderField: "Content-Type")
 
-            if !req.attachURL.isEmpty { setHeader(req.attachURL, name: "X-Attach", on: &request) }
+            if !req.attachURL.isEmpty { setHeader(encodedHeaderValue(req.attachURL), name: "X-Attach", on: &request) }
         }
 
         // Common notification metadata.
-        setHeader(req.title, name: "X-Title", on: &request)
+        setHeader(encodedHeaderValue(req.title), name: "X-Title", on: &request)
         setHeader(String(req.priority), name: "X-Priority", on: &request)
 
         if !req.tags.isEmpty {
-            setHeader(req.tags.joined(separator: ","), name: "X-Tags", on: &request)
+            setHeader(encodedHeaderValue(req.tags.joined(separator: ",")), name: "X-Tags", on: &request)
         }
 
-        setHeader(req.click, name: "X-Click", on: &request)
-        setHeader(req.email, name: "X-Email", on: &request)
+        setHeader(encodedHeaderValue(req.click), name: "X-Click", on: &request)
+        setHeader(encodedHeaderValue(req.email), name: "X-Email", on: &request)
 
         if !req.delay.isEmpty {
             setHeader(req.delay, name: "X-Delay", on: &request)
@@ -102,7 +102,10 @@ struct LocalAttachment {
     }
 
     private static func encodedHeaderValue(_ value: String) -> String {
-        guard value.contains(where: \.isNewline) else { return value }
+        let isASCII = value.unicodeScalars.allSatisfy { $0.isASCII }
+        let shouldEncode = value.contains(where: \.isNewline)
+            || (ProxyConfig.current().mode != .direct && !isASCII)
+        guard shouldEncode else { return value }
 
         let encoded = Data(value.utf8).base64EncodedString()
         return "=?UTF-8?B?\(encoded)?="
