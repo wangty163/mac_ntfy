@@ -175,12 +175,6 @@ struct ComposeView: View {
                     }
 
                     Toggle("Format body as Markdown", isOn: $req.markdown)
-
-                    if let errorText {
-                        Label(errorText, systemImage: "exclamationmark.triangle")
-                            .appFont(.caption)
-                            .foregroundStyle(.red)
-                    }
                 }
                 .padding(20)
             }
@@ -188,7 +182,15 @@ struct ComposeView: View {
             Divider()
 
             HStack {
-                Spacer()
+                if let errorText {
+                    Label(errorText, systemImage: "exclamationmark.triangle")
+                        .appFont(.caption)
+                        .foregroundStyle(.red)
+                        .lineLimit(2)
+                        .truncationMode(.tail)
+                }
+
+                Spacer(minLength: 8)
 
                 Button("Cancel") {
                     dismiss()
