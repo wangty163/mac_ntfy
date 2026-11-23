@@ -242,7 +242,7 @@ enum HostsMappedHTTPClient {
         return head
     }
 
-    /// In certain cases we need the response body.
+    /// Read the response body only when the server returns an HTTP error.
     static func requestWithBody(_ request: URLRequest, endpoint: Endpoint) async throws -> (head: ResponseHead, body: Data) {
         let connected = try await connect(to: endpoint)
         let connection = connected.connection
@@ -254,22 +254,35 @@ enum HostsMappedHTTPClient {
             over: connection
         )
 
-        var (head, initialBody) = try await receiveHead(from: connection)
-        head.connectionInfo = connected.info
+        let (head, initialBody) = try await receiveHead(from: connection)
 
-        let response = try StreamingResponse(
-            connection: connection,
-            connectionInfo: connected.info,
-            head: head,
-            initialBody: initialBody
-        )
+        var responseHead = head
+        responseHead.connectionInfo = connected.info
 
-        var body = Data()
-        while let chunk = try await response.nextBodyChunk() {
-            body.append(chunk)
+        // Successful responses don't need their body.
+        guard !(200...299).contains(responseHead.statusCode) else {
+            return (responseHead, Data())
         }
 
-        return (head, body)
+        // Read the body only for failed responses.
+        do {
+            let response = try StreamingResponse(
+                connection: connection,
+                connectionInfo: connected.info,
+                head: responseHead,
+                initialBody: initialBody
+            )
+
+            var body = Data()
+            while let chunk = try await response.nextBodyChunk() {
+                body.append(chunk)
+            }
+
+            return (responseHead, body)
+        } catch {
+            // Preserve the HTTP status even if reading the error body fails.
+            return (responseHead, Data())
+        }
     }
 
     private struct ConnectedSocket {
