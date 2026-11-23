@@ -242,6 +242,36 @@ enum HostsMappedHTTPClient {
         return head
     }
 
+    /// In certain cases we need the response body.
+    static func requestWithBody(_ request: URLRequest, endpoint: Endpoint) async throws -> (head: ResponseHead, body: Data) {
+        let connected = try await connect(to: endpoint)
+        let connection = connected.connection
+        defer { connection.cancel() }
+
+        try Task.checkCancellation()
+        try await send(
+            serialize(request, endpoint: endpoint, keepAlive: false),
+            over: connection
+        )
+
+        var (head, initialBody) = try await receiveHead(from: connection)
+        head.connectionInfo = connected.info
+
+        let response = try StreamingResponse(
+            connection: connection,
+            connectionInfo: connected.info,
+            head: head,
+            initialBody: initialBody
+        )
+
+        var body = Data()
+        while let chunk = try await response.nextBodyChunk() {
+            body.append(chunk)
+        }
+
+        return (head, body)
+    }
+
     private struct ConnectedSocket {
         let connection: NWConnection
         let info: ConnectionInfo

@@ -27,6 +27,9 @@ struct LocalAttachment {
 }
 
 @MainActor enum NtfyPublisher {
+    private struct ServerError: Decodable {
+        let code: Int
+    }
 
     // MARK: - Publishing
 
@@ -84,9 +87,15 @@ struct LocalAttachment {
             request.setValue(auth, forHTTPHeaderField: "Authorization")
         }
 
-        let statusCode = try await sendRequest(request)
+        let (statusCode, data) = try await sendRequest(request)
 
         guard (200...299).contains(statusCode) else {
+            // Attachment expiry before delayed delivery date
+            if isResponseCode(data, code: 40015) {
+                throw NtfyError.http("Attachment expires before send. Send sooner.")
+            }
+
+            // Standard error, if not handled explicitly
             throw NtfyError.http("Publish failed (HTTP \(statusCode))")
         }
     }
@@ -113,22 +122,34 @@ struct LocalAttachment {
 
     // MARK: - Shared HTTP transport
 
-    private static func sendRequest(_ request: URLRequest) async throws -> Int {
+    private static func sendRequest(_ request: URLRequest) async throws -> (statusCode: Int, data: Data) {
         guard let url = request.url else { throw URLError(.badURL) }
 
         if let endpoint = await HostsMappedHTTPClient.endpoint(for: url) {
-            let response = try await HostsMappedHTTPClient.request(request, endpoint: endpoint)
-            return response.statusCode
+            let response = try await HostsMappedHTTPClient.requestWithBody(request, endpoint: endpoint)
+            let body = (200...299).contains(response.head.statusCode) ? Data() : response.body
+            return (response.head.statusCode, body)
         }
 
         let session = ProxyConfig.makeEphemeralSession()
         defer { session.finishTasksAndInvalidate() }
 
-        let (_, response) = try await session.data(for: request)
+        let (data, response) = try await session.data(for: request)
 
         guard let http = response as? HTTPURLResponse else { throw NtfyError.http("No response") }
 
-        return http.statusCode
+        let body = (200...299).contains(http.statusCode) ? Data() : data
+        return (http.statusCode, body)
+    }
+
+    private static func isResponseCode(_ data: Data, code: Int) -> Bool {
+        guard let error = try? JSONDecoder().decode(
+            ServerError.self,
+            from: data
+        ) else {
+            return false
+        }
+        return error.code == code
     }
 
     // MARK: - Reachability
@@ -147,7 +168,7 @@ struct LocalAttachment {
                 request.setValue(auth, forHTTPHeaderField: "Authorization")
             }
 
-            let statusCode = try await sendRequest(request)
+            let (statusCode, _) = try await sendRequest(request)
 
             switch statusCode {
                 case 200...299:
