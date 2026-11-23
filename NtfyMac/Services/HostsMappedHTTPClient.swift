@@ -242,8 +242,12 @@ enum HostsMappedHTTPClient {
         return head
     }
 
-    /// Read the response body only when the server returns an HTTP error.
-    static func requestWithBody(_ request: URLRequest, endpoint: Endpoint) async throws -> (head: ResponseHead, body: Data) {
+    /// Read the response body only for specific HTTP status codes.
+    static func requestWithBody(
+        _ request: URLRequest,
+        endpoint: Endpoint,
+        readBodyForStatuses: Set<Int> = []
+    ) async throws -> (head: ResponseHead, body: Data) {
         let connected = try await connect(to: endpoint)
         let connection = connected.connection
         defer { connection.cancel() }
@@ -255,10 +259,12 @@ enum HostsMappedHTTPClient {
         )
 
         let (head, initialBody) = try await receiveHead(from: connection)
+        guard readBodyForStatuses.contains(head.statusCode) else { return (head, Data()) }
 
         var responseHead = head
         responseHead.connectionInfo = connected.info
 
+        // The following code could be simplified, but is kept for future changes.
         // Successful responses don't need their body.
         guard !(200...299).contains(responseHead.statusCode) else {
             return (responseHead, Data())

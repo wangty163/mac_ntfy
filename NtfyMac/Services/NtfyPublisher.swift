@@ -130,7 +130,7 @@ struct LocalAttachment {
 
         if let endpoint = await HostsMappedHTTPClient.endpoint(for: url) {
             if includeErrorBody {
-                let response = try await HostsMappedHTTPClient.requestWithBody(request, endpoint: endpoint)
+                let response = try await HostsMappedHTTPClient.requestWithBody(request, endpoint: endpoint, readBodyForStatuses: [400])
                 return (response.head.statusCode, response.body)
             } else {
                 let response = try await HostsMappedHTTPClient.request(request, endpoint: endpoint)
