@@ -122,13 +122,20 @@ struct LocalAttachment {
 
     // MARK: - Shared HTTP transport
 
-    private static func sendRequest(_ request: URLRequest) async throws -> (statusCode: Int, data: Data) {
+    private static func sendRequest(
+        _ request: URLRequest,
+        includeErrorBody: Bool = true
+    ) async throws -> (statusCode: Int, data: Data) {
         guard let url = request.url else { throw URLError(.badURL) }
 
         if let endpoint = await HostsMappedHTTPClient.endpoint(for: url) {
-            let response = try await HostsMappedHTTPClient.requestWithBody(request, endpoint: endpoint)
-            let body = (200...299).contains(response.head.statusCode) ? Data() : response.body
-            return (response.head.statusCode, body)
+            if includeErrorBody {
+                let response = try await HostsMappedHTTPClient.requestWithBody(request, endpoint: endpoint)
+                return (response.head.statusCode, response.body)
+            } else {
+                let response = try await HostsMappedHTTPClient.request(request, endpoint: endpoint)
+                return (response.statusCode, Data())
+            }
         }
 
         let session = ProxyConfig.makeEphemeralSession()
@@ -138,7 +145,7 @@ struct LocalAttachment {
 
         guard let http = response as? HTTPURLResponse else { throw NtfyError.http("No response") }
 
-        let body = (200...299).contains(http.statusCode) ? Data() : data
+        let body = includeErrorBody && !(200...299).contains(http.statusCode) ? data  : Data()
         return (http.statusCode, body)
     }
 
@@ -168,7 +175,7 @@ struct LocalAttachment {
                 request.setValue(auth, forHTTPHeaderField: "Authorization")
             }
 
-            let (statusCode, _) = try await sendRequest(request)
+            let (statusCode, _) = try await sendRequest(request, includeErrorBody: false)
 
             switch statusCode {
                 case 200...299:
