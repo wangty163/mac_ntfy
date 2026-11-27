@@ -18,7 +18,7 @@ concurrency:
 jobs:
   build:
     name: Build NtfyMac (macOS)
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 30
 
     steps:
@@ -26,7 +26,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Select Xcode
-        run: sudo xcode-select -switch /Applications/Xcode_15.4.app
+        run: sudo xcode-select -switch /Applications/Xcode_16.4.app
 
       - name: Show toolchain
         run: |
@@ -63,7 +63,7 @@ jobs:
 
   archive:
     name: Archive .app artifact
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 30
     needs: build
 
@@ -72,7 +72,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Select Xcode
-        run: sudo xcode-select -switch /Applications/Xcode_15.4.app
+        run: sudo xcode-select -switch /Applications/Xcode_16.4.app
 
       - name: Resolve build version
         id: version
@@ -100,6 +100,8 @@ jobs:
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
+            ARCHS="arm64 x86_64" \
+            ONLY_ACTIVE_ARCH=NO \
             MARKETING_VERSION="${{ steps.version.outputs.marketing_version }}" \
             CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
             NTFY_BUILD_VERSION_LABEL="${{ steps.version.outputs.version }}" \
@@ -111,6 +113,11 @@ jobs:
           APP_PATH="$(find build/DerivedData/Build/Products/Release -maxdepth 1 -name '*.app' -print -quit)"
           echo "Found: $APP_PATH"
           cp -R "$APP_PATH" build/export/
+
+      - name: Verify universal macOS 13 app
+        run: |
+          APP_PATH="$(find build/export -maxdepth 1 -name '*.app' -print -quit)"
+          bash scripts/verify_macos_app.sh "$APP_PATH"
 
       - name: Ad-hoc code sign
         # macOS only delivers UNUserNotificationCenter notifications for signed
