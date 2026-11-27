@@ -11,6 +11,8 @@ struct MessageDetailView: View {
 
     @State private var actionStatus: [String: String] = [:]
     @State private var runningActionID: String?
+    @State private var messageCopied = false
+    @State private var isMessageHovered = false
 
     private var message: NtfyMessage { stored.message }
 
@@ -70,22 +72,55 @@ struct MessageDetailView: View {
         return prefix.isEmpty ? base : "\(prefix) \(base)"
     }
 
+    private func copyMessage(_ body: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(body, forType: .string)
+
+        messageCopied = true
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            messageCopied = false
+        }
+    }
+
     @ViewBuilder
     private func bodyView(_ body: String) -> some View {
-        Group {
-            if message.isMarkdown {
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(Array(message.markdownBlocks.enumerated()), id: \.offset) { _, block in
-                        markdownBlock(block)
+        ZStack(alignment: .topTrailing) {
+            Group {
+                if message.isMarkdown {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(Array(message.markdownBlocks.enumerated()), id: \.offset) { _, block in
+                            markdownBlock(block)
+                        }
                     }
+                } else {
+                    Text(body)
+                        .textSelection(.enabled)
                 }
-            } else {
-                Text(body)
-                    .textSelection(.enabled)
             }
+            .appFont(.body)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button {
+                copyMessage(body)
+            } label: {
+                Image(systemName: messageCopied ? "checkmark" : "doc.on.doc")
+                    .frame(width: 28, height: 28)
+                    .background(
+                        Color(nsColor: .controlBackgroundColor),
+                        in: RoundedRectangle(cornerRadius: 6)
+                    )
+            }
+            .buttonStyle(.borderless)
+            .help(messageCopied ? "Copied!" : "Copy message")
+            .accessibilityLabel(messageCopied ? "Copied" : "Copy message")
+            .opacity(isMessageHovered || messageCopied ? 1 : 0)
+
         }
-        .appFont(.body)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .onHover { hovering in
+            isMessageHovered = hovering
+        }
         .padding(16)
         .cardBackground()
     }
@@ -115,19 +150,15 @@ struct MessageDetailView: View {
                         in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         case let .image(alt, url):
             Link(destination: url) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case let .success(image):
-                        image.resizable().scaledToFit()
-                            .frame(maxHeight: 360)
-                            .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius))
-                    case .failure:
-                        Label(alt.isEmpty ? "Open image" : alt, systemImage: "photo.badge.exclamationmark")
-                    default:
-                        ProgressView().frame(maxWidth: .infinity, minHeight: 100)
-                    }
+                MessageImageView(url: url) {
+                    Label(
+                        alt.isEmpty ? "Open image" : alt,
+                        systemImage: "photo.badge.exclamationmark"
+                    )
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .buttonStyle(.plain)
             .accessibilityLabel(alt.isEmpty ? "Image" : alt)
         }
@@ -141,45 +172,84 @@ struct MessageDetailView: View {
                 .appFont(.subheadline, weight: .semibold)
                 .foregroundStyle(.secondary)
 
-            if attachment.isImage, let url = attachment.fileURL {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case let .success(image):
-                        image.resizable().scaledToFit()
-                            .frame(maxHeight: 280)
-                            .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius))
-                    case .failure:
-                        attachmentRow(attachment)
-                    default:
-                        ProgressView().frame(maxWidth: .infinity, minHeight: 120)
+            if let url = attachment.fileURL {
+                if attachment.isImage {
+                    AttachmentContentView(
+                        attachment: attachment,
+                        url: url
+                    ) { actionsEnabled in
+                        attachmentRow(
+                            attachment,
+                            actionsEnabled: actionsEnabled
+                        )
                     }
+                } else if attachment.isHostedByNtfy && attachment.isExpired {
+                    attachmentErrorRow("Attachment no longer available")
+                    attachmentRow(attachment, actionsEnabled: false)
+                } else {
+                    // Non-image attachments are not checked automatically.
+                    attachmentRow(attachment, actionsEnabled: true)
                 }
             } else {
-                attachmentRow(attachment)
+                attachmentErrorRow("Attachment cannot be retrieved")
+                attachmentRow(attachment, actionsEnabled: false)
             }
         }
     }
 
-    private func attachmentRow(_ attachment: NtfyAttachment) -> some View {
+    private func attachmentRow(_ attachment: NtfyAttachment, actionsEnabled: Bool) -> some View {
         HStack(spacing: 12) {
             Image(systemName: attachment.isImage ? "photo" : "doc")
                 .appFont(.title2)
                 .foregroundStyle(.teal)
             VStack(alignment: .leading, spacing: 2) {
-                Text(attachment.name).fontWeight(.medium)
+                Text(attachment.name)
+                    .fontWeight(.medium)
+
                 if let size = attachment.humanSize {
-                    Text(size).appFont(.caption).foregroundStyle(.secondary)
+                    Text(size)
+                        .appFont(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
             Spacer()
-            if let url = attachment.fileURL {
+            if actionsEnabled, let url = attachment.fileURL {
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(
+                        url.absoluteString,
+                        forType: .string
+                    )
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                }
+                .buttonStyle(.borderless)
+                .help("Copy URL")
+
                 Button {
                     NSWorkspace.shared.open(url)
                 } label: {
                     Image(systemName: "arrow.down.circle")
                 }
                 .buttonStyle(.borderless)
+                .help("Download")
             }
+        }
+        .padding(14)
+        .cardBackground()
+    }
+
+    private func attachmentErrorRow(_ message: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle")
+                .appFont(.title2)
+                .foregroundStyle(.secondary)
+
+            Text(message)
+                .appFont(.subheadline)
+                .foregroundStyle(.secondary)
+
+            Spacer()
         }
         .padding(14)
         .cardBackground()
@@ -221,12 +291,12 @@ struct MessageDetailView: View {
             let result = await ActionRunner.run(action)
             runningActionID = nil
             switch result {
-            case .opened: actionStatus[action.id] = "Opened ↗"
-            case .copied: actionStatus[action.id] = "Copied 📋"
-            case let .copyFailed(reason): actionStatus[action.id] = "Not copied · \(reason)"
-            case let .httpSucceeded(code): actionStatus[action.id] = "Sent · \(code)"
-            case let .httpFailed(reason): actionStatus[action.id] = "Failed · \(reason)"
-            case let .unsupported(reason): actionStatus[action.id] = reason
+                case .opened: actionStatus[action.id] = "Opened ↗"
+                case .copied: actionStatus[action.id] = "Copied 📋"
+                case let .copyFailed(reason): actionStatus[action.id] = "Not copied · \(reason)"
+                case let .httpSucceeded(code): actionStatus[action.id] = "Sent · \(code)"
+                case let .httpFailed(reason): actionStatus[action.id] = "Failed · \(reason)"
+                case let .unsupported(reason): actionStatus[action.id] = reason
             }
         }
     }
@@ -312,5 +382,147 @@ struct FlowLayout: Layout {
             x += size.width + spacing
             rowHeight = max(rowHeight, size.height)
         }
+    }
+}
+
+private struct AttachmentContentView<Row: View>: View {
+    let attachment: NtfyAttachment
+    let url: URL
+    @ViewBuilder let attachmentRow: (Bool) -> Row
+    @State private var result: LoadResult = .loading
+    @State private var retryID = 0
+
+    private enum LoadResult {
+        case loading
+        case success(NSImage)
+        case expired
+        case unavailable
+    }
+
+    private struct ServerError: Decodable {
+        let code: Int
+        let http: Int
+        let error: String
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            switch result {
+                case .loading:
+                    ProgressView()
+                        .frame(maxWidth: .infinity, minHeight: 100)
+                    attachmentRow(true)
+
+                case .success(let image):
+                    MessageImageView(image: image) {}
+                    attachmentRow(true)
+
+                case .expired:
+                    errorRow("Attachment no longer available")
+                    attachmentRow(false)
+
+                case .unavailable:
+                    errorRow(
+                        "Attachment preview not available right now",
+                        showsRetry: true
+                    )
+                    attachmentRow(true)
+            }
+        }
+        .task(id: "\(url.absoluteString)-\(retryID)") {
+            await loadAttachment()
+        }
+    }
+
+    private func loadAttachment() async {
+        result = .loading
+
+        // Check hosted attachment expiration before making a request.
+        if attachment.isHostedByNtfy && attachment.isExpired {
+            result = .expired
+            return
+        }
+
+        do {
+            let request = URLRequest(url: url)
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard !Task.isCancelled else { return }
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                result = .unavailable
+                return
+            }
+
+            guard (200..<300).contains(httpResponse.statusCode) else {
+                // Only an ntfy-hosted attachment can be classified as expired.
+                result = attachment.isHostedByNtfy && isExpiredResponse(data)
+                    ? .expired
+                    : .unavailable
+                return
+            }
+
+            guard let image = NSImage(data: data) else {
+                result = .unavailable
+                return
+            }
+
+            // Use pixel dimensions as the image's logical dimensions.
+            if let bitmap = NSBitmapImageRep(data: data) {
+                image.size = NSSize(
+                    width: bitmap.pixelsWide,
+                    height: bitmap.pixelsHigh
+                )
+            }
+
+            result = .success(image)
+
+        } catch {
+            if !Task.isCancelled {
+                result = .unavailable
+            }
+        }
+    }
+
+    private func isExpiredResponse(_ data: Data) -> Bool {
+        guard let error = try? JSONDecoder().decode(
+            ServerError.self,
+            from: data
+        ) else {
+            return false
+        }
+
+        return error.code == 40401
+            && error.http == 404
+            && error.error == "page not found"
+    }
+
+    private func errorRow(_ message: String, showsRetry: Bool = false) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle")
+                .appFont(.title2)
+                .foregroundStyle(.secondary)
+            Text(message)
+                .appFont(.subheadline)
+                .foregroundStyle(.secondary)
+            Spacer()
+            if showsRetry {
+                Button {
+                    retryID += 1
+                } label: {
+                    Text("Retry")
+                        .appFont(.caption, weight: .semibold)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            Color.accentColor.opacity(0.12),
+                            in: Capsule()
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(14)
+        .cardBackground()
     }
 }
