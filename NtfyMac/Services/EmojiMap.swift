@@ -8,10 +8,27 @@
 
 import Foundation
 
+struct EmojiEntry: Identifiable {
+    let shortcode: String
+    let emoji: String
+    let category: EmojiCategory
+
+    var id: String { shortcode }
+}
+
 enum EmojiMap {
     static func emoji(for tag: String) -> String? {
         table[tag.lowercased()]
     }
+
+    static let entries: [EmojiEntry] = table.map {
+        EmojiEntry(
+            shortcode: $0.key,
+            emoji: $0.value,
+            category: EmojiCategories.byShortcode[$0.key] ?? .other
+        )
+    }
+    .sorted { $0.shortcode < $1.shortcode }
 
     private static let table: [String: String] = [
         "grinning": "😀", "smiley": "😃", "smile": "😄", "grin": "😁", "laughing": "😆",

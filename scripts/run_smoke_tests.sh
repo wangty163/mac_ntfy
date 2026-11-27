@@ -13,6 +13,7 @@ xcrun swiftc -parse-as-library -target "$TARGET" \
   NtfyMac/Models/ConnectionState.swift \
   NtfyMac/Models/AppSettings.swift \
   NtfyMac/Services/EmojiMap.swift \
+  NtfyMac/Services/EmojiCategories.swift \
   NtfyMac/Services/LaunchAtLogin.swift \
   NtfyMac/Services/ProxyConfig.swift \
   NtfyMac/Services/HostsMappedHTTPClient.swift \

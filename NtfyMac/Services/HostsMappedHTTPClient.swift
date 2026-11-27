@@ -242,6 +242,88 @@ enum HostsMappedHTTPClient {
         return head
     }
 
+    private enum ResponseBodyReadError: Error {
+        case tooLarge
+        case timedOut
+    }
+
+    private static func readResponseBody(
+        from response: StreamingResponse,
+        maxBytes: Int = 1_024,
+        timeoutNanoseconds: UInt64 = 2_000_000_000
+    ) async throws -> Data {
+        try await withThrowingTaskGroup(of: Data.self) { group in
+            group.addTask {
+                var body = Data()
+
+                while let chunk = try await response.nextBodyChunk() {
+                    guard body.count + chunk.count <= maxBytes else {
+                        response.cancel()
+                        throw ResponseBodyReadError.tooLarge
+                    }
+
+                    body.append(chunk)
+                }
+
+                return body
+            }
+
+            group.addTask {
+                try await Task.sleep(nanoseconds: timeoutNanoseconds)
+                response.cancel()
+                throw ResponseBodyReadError.timedOut
+            }
+
+            defer { group.cancelAll() }
+
+            guard let body = try await group.next() else {
+                throw ResponseBodyReadError.timedOut
+            }
+
+            return body
+        }
+    }
+
+    /// Read the response body only for specific HTTP status codes.
+    static func requestWithBody(
+        _ request: URLRequest,
+        endpoint: Endpoint,
+        readBodyForStatuses: Set<Int> = []
+    ) async throws -> (head: ResponseHead, body: Data) {
+        let connected = try await connect(to: endpoint)
+        let connection = connected.connection
+        defer { connection.cancel() }
+
+        try Task.checkCancellation()
+        try await send(
+            serialize(request, endpoint: endpoint, keepAlive: false),
+            over: connection
+        )
+
+        var (head, initialBody) = try await receiveHead(from: connection)
+        head.connectionInfo = connected.info
+
+        guard readBodyForStatuses.contains(head.statusCode),
+            !(200...299).contains(head.statusCode) else {
+            return (head, Data())
+        }
+
+        do {
+            let response = try StreamingResponse(
+                connection: connection,
+                connectionInfo: connected.info,
+                head: head,
+                initialBody: initialBody
+            )
+
+            let body = try await readResponseBody(from: response)
+            return (head, body)
+        } catch {
+            // Preserve the HTTP status even if reading the error body fails.
+            return (head, Data())
+        }
+}
+
     private struct ConnectedSocket {
         let connection: NWConnection
         let info: ConnectionInfo
