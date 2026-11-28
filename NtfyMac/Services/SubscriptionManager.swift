@@ -11,6 +11,7 @@ import Foundation
 import Combine
 import Network
 import AppKit
+import SwiftUI
 
 @MainActor
 final class SubscriptionManager: ObservableObject {
@@ -36,7 +37,7 @@ final class SubscriptionManager: ObservableObject {
     private var notifiedOfflineIDs: Set<UUID> = []
 
     private let settings: AppSettings
-    private let store = PersistenceStore.shared
+    private let store: PersistenceStore
     private var connections: [UUID: NtfyConnection] = [:]
 
     private let pathMonitor = NWPathMonitor()
@@ -54,21 +55,27 @@ final class SubscriptionManager: ObservableObject {
     private var hostsWatcher: HostsFileWatcher?
     private let hostsChanged = PassthroughSubject<Void, Never>()
 
-    init(settings: AppSettings) {
+    init(
+        settings: AppSettings,
+        store: PersistenceStore = .shared,
+        monitorSystemEvents: Bool = true
+    ) {
         self.settings = settings
+        self.store = store
         self.subscriptions = store.loadSubscriptions()
         self.messages = store.loadMessages()
         diagnosticsStore.reset(subscriptionIDs: subscriptions.map(\.id))
 
-        NotificationService.shared.onActivated = { [weak self] subID, messageID in
-            self?.markRead(subscriptionID: subID, messageID: messageID)
-            // Set the reveal target *before* surfacing the window so the views
-            // pick it up as they appear (the window may be closed at this point).
-            self?.pendingReveal = (subID, messageID)
-            MainWindow.show()
+        if monitorSystemEvents {
+            NotificationService.shared.onActivated = { [weak self] subID, messageID in
+                self?.markRead(subscriptionID: subID, messageID: messageID)
+                // Set the reveal target *before* surfacing the window so the views
+                // pick it up as they appear (the window may be closed at this point).
+                self?.pendingReveal = (subID, messageID)
+                MainWindow.show()
+            }
+            startMonitoring()
         }
-
-        startMonitoring()
         connectAll()
     }
 
@@ -186,7 +193,7 @@ final class SubscriptionManager: ObservableObject {
     }
 
     func reconnectAll() {
-        for (_, connection) in connections { connection.restart() }
+        for sub in subscriptions { connect(sub, restart: true) }
     }
 
     func reconnect(_ subscriptionID: UUID) {
